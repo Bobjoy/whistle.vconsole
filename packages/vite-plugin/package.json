@@ -1,0 +1,47 @@
+{
+  "name": "@bobjoy/vconsole-vite",
+  "version": "0.1.0",
+  "description": "Vite plugin that auto-injects the @bobjoy/vconsole probe into your H5 page during dev.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "keywords": [
+    "vite",
+    "vconsole",
+    "mcp",
+    "debug",
+    "h5"
+  ],
+  "dependencies": {
+    "@bobjoy/vconsole": "workspace:*"
+  },
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "bobjoy",
+  "license_note": "Probe code is a fork of Tencent vConsole (MIT).",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "presets": [
+    [
+      "@babel/preset-env",
+      {
+        "modules": "auto",
+        "targets": "defaults",
+        "loose": true,
+        "debug": false
+      }
+    ],
+    "@babel/preset-typescript"
+  ],
+  "plugins": [
+    "@babel/plugin-transform-runtime",
+    ["@babel/plugin-transform-class-properties", { "loose": true }],
+    ["@babel/plugin-transform-private-methods", { "loose": true }],
+    "@babel/plugin-transform-block-scoping",
+    "@babel/plugin-transform-export-namespace-from",
+    "@babel/plugin-transform-object-rest-spread"
+  ]
+}

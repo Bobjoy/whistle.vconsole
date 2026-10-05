@@ -1,0 +1,21 @@
+{
+  "name": "whistle-vconsole",
+  "private": true,
+  "version": "0.3.0",
+  "description": "whistle vconsole 插件 + MCP server + H5 页面调试探针（fork 自 Tencent vConsole），面向 AI agent 的移动端 H5 调试工具",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": ["core-js", "svelte-preprocess"]
+  },
+  "scripts": {
+    "build": "pnpm --filter @bobjoy/vconsole build && pnpm --filter @bobjoy/vconsole-vite build && pnpm --filter @bobjoy/whistle.vconsole build",
+    "dev:server": "pnpm --filter @bobjoy/whistle.vconsole dev",
+    "build:probe": "pnpm --filter @bobjoy/vconsole build",
+    "build:plugin": "pnpm --filter @bobjoy/whistle.vconsole build",
+    "test:e2e": "node packages/whistle-plugin/test/ws-codec.unit.mjs && node packages/whistle-plugin/test/screenshot-loader.unit.mjs && node packages/whistle-plugin/test/e2e.mjs && node packages/whistle-plugin/test/multi-session.e2e.mjs && node packages/whistle-plugin/test/http.e2e.mjs",
+    "demo": "node examples/demo-h5/server.mjs 9443"
+  }
+}

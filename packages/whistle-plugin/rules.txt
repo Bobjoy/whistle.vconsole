@@ -1,0 +1,5 @@
+# whistle.vconsole 注入规则：随插件自动生效（在 whistle 的 Plugins 面板可整体关闭）。
+# whistle 在开发机本机抓取 http://127.0.0.1:9527/inject.html，把结果内联进 HTML 响应，
+# 页面无需引任何脚本；手机只要能访问开发机的 9527（探针 bundle）与 9528（ws hub）。
+# htmlPrepend 只改写 HTML 响应，JS/CSS/接口请求不受影响。只想覆盖某些域名就把 * 换成具体 pattern。
+* htmlPrepend://http://127.0.0.1:9527/inject.html enable://strictHtml

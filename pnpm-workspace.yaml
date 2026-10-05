@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - examples/*
+
+verifyDepsBeforeRun: false
+
+ignoredBuiltDependencies:
+  - core-js
+  - svelte-preprocess
+
+allowBuilds:
+  esbuild: set this to true or false

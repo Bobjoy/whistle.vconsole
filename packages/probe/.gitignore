@@ -1,0 +1,22 @@
+dist
+lib
+typings
+
+# Logs
+logs
+*.log
+
+# Dependency directory
+node_modules
+
+# npm cache directory
+.npm
+
+### OSX ###
+*.DS_Store
+
+# IDE IDEA
+.idea
+
+# Thumbnails
+._*

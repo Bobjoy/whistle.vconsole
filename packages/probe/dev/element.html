@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>vConsole: Element</title>
+  <link href="./lib/weui.min.css" rel="stylesheet"/>
+  <link href="./lib/demo.css" rel="stylesheet"/>
+
+  <!-- <script type="module" src="../dist/vconsole.min.js"></script> -->
+</head>
+<body ontouchstart id="body">
+  <div id="page" class="page">
+    <h1 id="title" class="page_title">Element</h1>
+    <div id="text" class="weui_text_area">
+      Hello World!
+    </div>
+    <a onclick="_changeAttr()" href="javascript:;" class="weui_btn weui_btn_default">changeAttr</a>
+    <a onclick="_changeCharacterData()" href="javascript:;" class="weui_btn weui_btn_default">changeCharacterData</a>
+    <a onclick="_removeChild()" href="javascript:;" class="weui_btn weui_btn_default">removeChild</a>
+    <a onclick="_addChild()" href="javascript:;" class="weui_btn weui_btn_default">addChild</a>
+    <a onclick="_addChildComment()" href="javascript:;" class="weui_btn weui_btn_default">addChild: Comment</a>
+  </div>
+</body>
+</html>
+
+<script type="module">
+import '../dist/vconsole.min.js';
+
+window.vConsole = new window.VConsole({
+  maxLogNumber: 1000,
+  // disableLogScrolling: true,
+  defaultPlugins: ['element'],
+  onReady: () => {
+    console.log('vConsole is ready.');
+    setTimeout(() => { vConsole.showPlugin('element'); });
+  },
+  onClearLog: () => {
+    console.log('on clearLog');
+  }
+});
+</script>
+
+<script>
+const divIdList = [];
+for (let i = 0; i < 20; i++) {
+  const id = 'rand_' + i;
+  _doAddDiv(id, 'body');
+}
+
+function _doAddDiv(id, toId, insertBefore) {
+  const t = document.getElementById(toId);
+  const d = document.createElement('DIV');
+  d.id = id;
+  d.innerText = id;
+  if (insertBefore) {
+    t.parentNode.insertBefore(d, t);
+  } else {
+    t.append(d);
+  }
+  divIdList.push(id);
+}
+
+function _changeAttr() {
+  console.log('_changeAttr');
+  // document.body.style.background = `hsl(${(Math.random() * 255) | 0}, 92%, 67%)`;
+  document.getElementById('page').style.background = `hsl(${(Math.random() * 255) | 0}, 92%, 67%)`;
+}
+
+function _changeCharacterData() {
+  console.log('_changeCharacterData');
+  const node = document.getElementById('title').firstChild;
+  node.textContent = Math.random();
+}
+
+function _removeChild() {
+  const _rm = () => {
+    const id = divIdList.shift();
+    document.getElementById(id).remove();
+    console.log('_removeChild', id);
+  };
+  vConsole.show();
+  vConsole.showPlugin('element');
+  setTimeout(_rm, 2000);
+  setTimeout(_rm, 4000);
+  setTimeout(_rm, 6000);
+  setTimeout(_rm, 8000);
+}
+
+function _addChild() {
+  const _do = (toId, insertBefore) => {
+    return () => {
+      const id = 'rand_' + Math.random();
+      console.log('_addChild', id);
+      _doAddDiv(id, toId, insertBefore);
+    };
+  }
+  vConsole.show();
+  vConsole.showPlugin('element');
+  setTimeout(_do('body'), 1000);
+  setTimeout(_do(divIdList[1], true), 2000);
+}
+
+function _addChildComment() {
+  setTimeout(() => {
+    const t = document.getElementById(divIdList[1]);
+    const d1 = document.createComment('Im a comment data.');
+    const d2 = document.createComment('You are a comment data.');
+    t.append(d1);
+    t.parentNode.insertBefore(d2, t);
+  }, 1000);
+  vConsole.show();
+  vConsole.showPlugin('element');
+}
+</script>

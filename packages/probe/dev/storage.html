@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>vConsole: Storage</title>
+  <link href="./lib/weui.min.css" rel="stylesheet"/>
+  <link href="./lib/demo.css" rel="stylesheet"/>
+
+  <!-- <script type="module" src="../dist/vconsole.min.js"></script> -->
+</head>
+<body ontouchstart>
+  <div class="page">
+    <a onclick="setCookie()" href="javascript:;" class="weui_btn weui_btn_default">setCookie</a>
+    <a onclick="setDomainCookie()" href="javascript:;" class="weui_btn weui_btn_default">setDomainCookie</a>
+    <a onclick="largeStorage()" href="javascript:;" class="weui_btn weui_btn_default">largeStorage</a>
+    <a onclick="xssStorage()" href="javascript:;" class="weui_btn weui_btn_default">XSS</a>
+    <a onclick="defaultStoragesClear()" href="javascript:;" class="weui_btn weui_btn_default">defaultStorages: clear</a>
+    <a onclick="defaultStoragesAdd()" href="javascript:;" class="weui_btn weui_btn_default">defaultStorages: add</a>
+    <a onclick="defaultStoragesUpdate()" href="javascript:;" class="weui_btn weui_btn_default">defaultStorages: update</a>
+  </div>
+</body>
+</html>
+
+<script type="module">
+import '../dist/vconsole.min.js';
+
+window.vConsole = new window.VConsole({
+  // disableLogScrolling: true,
+  storage: {
+    // defaultStorages: ['sessionStorage', 'cookies', 'localStorage'],
+  },
+  onReady: function() {
+    console.log('vConsole is ready.');
+    setTimeout(() => {
+      vConsole.showPlugin('storage');
+    }, 10);
+  },
+});
+</script>
+
+<script>
+
+function setCookie() {
+  console.info('setCookie() Start');
+  const expires = (new Date('2030-12-17T03:24:00')).toUTCString();
+  document.cookie = `foo1=bar1; expires=${expires}; path=/;`
+  console.info('setCookie() End');
+}
+
+function setDomainCookie() {
+  console.info('setDomainCookie() Start');
+  const expires = (new Date('2030-12-17T03:24:00')).toUTCString();
+  document.cookie = `d0=EmptyDomain; expires=${expires}; path=/;`
+  document.cookie = `d1=a.com; expires=${expires}; path=/; domain=a.com;`
+  document.cookie = `d2=.a.com; expires=${expires}; path=/; domain=.a.com;`
+  document.cookie = `d3=b.a.com; expires=${expires}; path=/; domain=b.a.com;`
+  document.cookie = `d4=.b.a.com; expires=${expires}; path=/; domain=.b.a.com;`
+
+  document.cookie = `d3=b.a.com/dev; expires=${expires}; path=/dev; domain=b.a.com;`
+
+  setTimeout(() => {
+    // clearCookieList();
+  }, 10);
+  console.info('setDomainCookie() End');
+}
+
+function clearCookieList() {
+  if (!document.cookie || !navigator.cookieEnabled) {
+    return;
+  }
+  let hostname = window.location.hostname;
+  const uris = window.location.hostname.split('.');
+  let list = getCookieList();
+  for (var i=0; i<list.length; i++) {
+    let name = list[i].name;
+    document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+    document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+    let uri = '.' + uris[uris.length - 1];
+    for (let j = uris.length - 2; j >= 0; j--) {
+      uri = '.' + uris[j] + uri;
+      console.log(name, uri);
+      document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=${uri};`;
+    }
+  }
+}
+
+function getCookieList() {
+  if (!document.cookie || !navigator.cookieEnabled) {
+    return [];
+  }
+
+  let list = [];
+  let items = document.cookie.split(';');
+  for (let i=0; i<items.length; i++) {
+    let item = items[i].split('=');
+    let name = item.shift().replace(/^ /, ''),
+        value = item.join('=');
+    try {
+      name = decodeURIComponent(name);
+      value = decodeURIComponent(value);
+    } catch(e) {
+      // do not print external input directly to prevent forgery (issue #345)
+      // console.log(e, name, value);
+    }
+    list.push({
+      name: name,
+      value: value
+    });
+  }
+  return list;
+}
+
+function largeStorage() {
+  console.info('largeStorage() Start');
+  const txt = ['NN\n', '的', '中', '英', '日', '非', '你好', '大海', '世界', '地球村', '宇宙中心', '黑洞', '星际'];
+  let value = '';
+  for (let i = 0; i <= 100000; i++) {
+    value += Math.random().toString(36).replace(/[^a-z]+/g, '') + txt[Math.floor(Math.random() * txt.length)];
+  }
+  console.log('large value:', value);
+  localStorage.setItem('MassiveHugeLargeBigItem', value);
+  console.info('largeStorage() End');
+}
+
+function xssStorage() {
+  console.info('xssStorage() Start');
+  localStorage.setItem("-->\tyo\n'\"/><iframe>", "-->\tyo\n'\"/><iframe>");
+  sessionStorage.setItem("-->\tyo\n'\"/><iframe>", "-->\tyo\n'\"/><iframe>");
+  document.cookie = encodeURIComponent('foo') + '=' + encodeURIComponent("-->\t1=yo");
+  document.cookie = encodeURIComponent('fooo') + '=' + escape('广州天河');
+  console.info('xssStorage() End');
+}
+
+function defaultStoragesClear() {
+  vConsole.setOption('storage.defaultStorages', ['localStorage']);
+}
+
+function defaultStoragesAdd() {
+  window.wx = {};
+  vConsole.setOption('storage.defaultStorages', ['wxStorage', 'localStorage']);
+}
+
+function defaultStoragesUpdate() {
+  vConsole.setOption('storage.defaultStorages', ['localStorage', 'unknownStorage', 'sessionStorage']);
+}
+</script>

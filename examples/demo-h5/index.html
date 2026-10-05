@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>whistle-vconsole demo</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 16px; background: #f5f5f7; }
+    h1 { font-size: 20px; }
+    button { display: block; width: 100%; margin: 8px 0; padding: 14px; font-size: 16px;
+             border: none; border-radius: 10px; background: #007aff; color: #fff; }
+    button.gray { background: #8e8e93; }
+    #log { margin-top: 12px; font-size: 13px; color: #333; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>whistle-vconsole 调试演示页</h1>
+  <button id="btn-log">产生 console 日志</button>
+  <button id="btn-error">抛出异常日志</button>
+  <button id="btn-fetch">发起 fetch 请求</button>
+  <button id="btn-xhr">发起 XHR 请求</button>
+  <button id="btn-storage">写入 localStorage</button>
+  <button class="gray" id="btn-eval-marker">设置 eval 标记（供 agent 验证）</button>
+  <div id="log"></div>
+
+  <script src="/vconsole.min.js"></script>
+  <script>
+    // hub 与 demo 页跑在同一台开发机上，默认直接跟着页面地址走；
+    // 调试别的机器时可用 URL 参数覆盖：?ws=ws://192.168.x.x:9528
+    var qs = new URLSearchParams(location.search);
+    var vc = new VConsole({
+      serverUrl: qs.get('ws') || 'ws://' + location.hostname + ':9528',
+      // deviceName 不配置，由VConsole内部根据UA+DPR生成，同一个设备唯一
+    });
+
+    function show(msg) {
+      document.getElementById('log').textContent += msg + '\n';
+    }
+
+    console.log('[demo] page loaded', { href: location.href });
+
+    document.getElementById('btn-log').onclick = function () {
+      console.log('用户点击了日志按钮', { time: Date.now() });
+      console.warn('这是一条 warn');
+      show('logged');
+    };
+    document.getElementById('btn-error').onclick = function () {
+      console.error('这是一条 error：', new Error('demo error'));
+      try { JSON.parse('{bad json}'); } catch (e) { console.error('捕获的异常:', e); }
+      show('errored');
+    };
+    document.getElementById('btn-fetch').onclick = function () {
+      fetch('/api/test?from=fetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: 'world' }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { console.log('fetch 响应:', d); show('fetch done'); })
+        .catch(function (e) { console.error('fetch 失败:', e); });
+    };
+    document.getElementById('btn-xhr').onclick = function () {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/api/test?from=xhr');
+      xhr.onload = function () { console.log('xhr 响应:', xhr.responseText); show('xhr done'); };
+      xhr.onerror = function () { console.error('xhr 失败'); };
+      xhr.send();
+    };
+    document.getElementById('btn-storage').onclick = function () {
+      localStorage.setItem('demo_key', 'value-' + Date.now());
+      document.cookie = 'demo_cookie=ck-' + Date.now() + '; path=/';
+      console.log('storage 已写入');
+      show('storage written');
+    };
+    document.getElementById('btn-eval-marker').onclick = function () {
+      window.__EVAL_MARKER__ = 'marker-' + Date.now();
+      show('marker set: ' + window.__EVAL_MARKER__);
+    };
+  </script>
+</body>
+</html>
