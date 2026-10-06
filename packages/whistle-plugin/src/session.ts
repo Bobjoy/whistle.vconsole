@@ -9,7 +9,7 @@
 import type {
   LogItem, NetworkItem, NetworkRequestType, PageInfo, RealDeviceHints,
 } from '@bobjoy/vconsole-protocol';
-import { WS_BINARY_MARKER } from '@bobjoy/vconsole-protocol';
+import { PROTOCOL_VERSION, WS_BINARY_MARKER } from '@bobjoy/vconsole-protocol';
 import { parseDeviceLabel, realDeviceFromDeviceName } from './deviceLabel.js';
 
 interface IndexedLog {
@@ -82,6 +82,12 @@ export class Session {
   /** human-readable device info parsed from the UA, e.g. "iPhone · iOS 16.0 · WeChat 8.0.28" */
   public deviceLabel?: string;
   public probeVersion?: string;
+  /**
+   * The protocol the probe reported in `hello` when it differs from ours —
+   * a signal, never a cutoff (ADR-008): an old page must keep working against
+   * a new hub, but the operator has to be able to see why results look odd.
+   */
+  public protocolMismatch?: number;
   public page?: PageInfo;
   public online = false;
   public firstSeenAt = Date.now();
@@ -130,6 +136,7 @@ export class Session {
     deviceName?: string;
     realDevice?: RealDeviceHints;
     probeVersion?: string;
+    protocol?: number;
     page?: PageInfo;
   }) {
     this.ws = ws;
@@ -137,6 +144,10 @@ export class Session {
     this.lastSeenAt = Date.now();
     if (hello.deviceName) { this.deviceName = hello.deviceName; }
     if (hello.probeVersion) { this.probeVersion = hello.probeVersion; }
+    // only a reported number can disagree; a probe old enough to stay silent
+    // is unknowable, and guessing would put fake warnings on real sessions
+    this.protocolMismatch = typeof hello.protocol === 'number' && hello.protocol !== PROTOCOL_VERSION
+      ? hello.protocol : undefined;
     if (hello.page) {
       this.page = hello.page;
       // refresh the UA-derived label on every hello (UA can change on reload);
@@ -364,6 +375,7 @@ export class Session {
         endTime: item.endTime,
         costTime: item.costTime,
         transferSize: item.transferSize,
+        replayedFrom: item.replayedFrom,
       })),
       nextSince,
       dropped: Math.max(0, dropped),
@@ -388,6 +400,7 @@ export class Session {
       deviceLabel: this.deviceLabel,
       online: this.online,
       probeVersion: this.probeVersion,
+      ...(this.protocolMismatch !== undefined ? { protocolMismatch: this.protocolMismatch } : {}),
       url: this.page?.url,
       title: this.page?.title,
       userAgent: this.page?.userAgent,

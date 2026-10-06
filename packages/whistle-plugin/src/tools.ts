@@ -58,6 +58,12 @@ function str(v: unknown): string | undefined {
   return v === undefined || v === null ? undefined : String(v);
 }
 
+/** Methods a replay can send without asking first. */
+const IDEMPOTENT_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+const REQUEST_NOT_FOUND = (requestId: string) =>
+  `request not found: ${requestId} (buffers may have been evicted; re-list with get_network)`;
+
 /**
  * Execute a tool call against the hub. Never throws: failures come back as
  * { isError } results so proxy mode can forward them verbatim.
@@ -115,7 +121,7 @@ export async function handleTool(
         if (args.requestId) {
           const item = session.getNetworkById(String(args.requestId));
           if (!item) {
-            return errorResult(new Error(`request not found: ${args.requestId} (buffers may have been evicted; re-list with get_network)`));
+            return errorResult(new Error(REQUEST_NOT_FOUND(String(args.requestId))));
           }
           return jsonResult(item);
         }
@@ -175,6 +181,33 @@ export async function handleTool(
             mimeType: shot.format === 'jpeg' ? 'image/jpeg' : 'image/png',
           }],
         };
+      }
+
+      case 'replay_request': {
+        const session = resolveSession(hub, opts);
+        const requestId = String(args.requestId);
+        const source = session.getNetworkById(requestId);
+        if (!source) {
+          return errorResult(new Error(REQUEST_NOT_FOUND(requestId)));
+        }
+        if (source.requestType !== 'xhr' && source.requestType !== 'fetch') {
+          return errorResult(new Error(
+            `request ${requestId} is a ${source.requestType} request; only xhr and fetch requests can be replayed`,
+          ));
+        }
+        const method = (source.method || 'GET').toUpperCase();
+        if (!IDEMPOTENT_METHODS.includes(method) && args.allowUnsafe !== true) {
+          return errorResult(new Error(
+            `${method} is not idempotent, so replaying it repeats the side effect — nothing was sent. ` +
+            `Pass allowUnsafe: true to replay it anyway.`,
+          ));
+        }
+        // a lossy body (`[object Blob]` and friends) is refused page-side, where the real
+        // captured shape still exists; the hub only holds display text, which can be truncated
+        // the page sends it, so cookies and referer come along by themselves;
+        // on timeout the request still runs to completion and is recorded —
+        // read it back later with get_network
+        return jsonResult(await hub.sendCommand('replay', { requestId }, 30000, opts.sessionId));
       }
 
       default:

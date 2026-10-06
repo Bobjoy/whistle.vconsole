@@ -22,13 +22,20 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const RUNTIME_DEPS = ['@modelcontextprotocol/sdk', 'ws', 'zod'];
 
 // 1. probe bundle -> dist/probe.js
+const probeBundle = path.join(monorepo, 'packages/vconsole/dist/vconsole.min.js');
+if (!fs.existsSync(probeBundle)) {
+  throw new Error(
+    `找不到探针产物 ${probeBundle}：packages/vconsole 是 git submodule，` +
+    '先跑 git submodule update --init，再 pnpm --filter @bobjoy/vconsole build',
+  );
+}
 fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
 fs.copyFileSync(
-  path.join(monorepo, 'packages/probe/dist/vconsole.min.js'),
+  probeBundle,
   path.join(root, 'dist/probe.js'),
 );
 
-for (const file of ['index.cjs', 'cli.cjs']) {
+for (const file of ['index.cjs', 'cli.cjs', 'httpService.cjs']) {
   if (!fs.existsSync(path.join(root, 'dist', file))) {
     throw new Error(`dist/${file} 缺失，请先构建：pnpm --filter @bobjoy/whistle.vconsole build`);
   }
@@ -45,8 +52,8 @@ for (const file of ['html2canvas.min.js']) {
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'vcm-plugin-'));
 const packDir = path.join(work, 'package');
 fs.mkdirSync(packDir, { recursive: true });
-// devDependencies stay out of the manifest: the shared @bobjoy/vconsole-protocol
-// workspace link is build-time only and npm cannot install a `workspace:*` range
+// devDependencies stay out of the manifest: nothing in there is needed at
+// runtime (the protocol source is inlined into dist/*.cjs at build time)
 const { devDependencies, ...publishPkg } = pkg;
 fs.writeFileSync(path.join(packDir, 'package.json'), JSON.stringify({
   ...publishPkg,

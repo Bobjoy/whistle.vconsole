@@ -123,6 +123,20 @@ export function createMcpServer(backend: ToolBackend, version: string): McpServe
     },
   });
 
+  tool('replay_request', {
+    title: 'Replay a captured request from the page',
+    description:
+      'Send one already-captured request (requestId from get_network) again, as the page recorded it, and return this run\'s fresh response. ' +
+      'The page itself issues the request, so cookies/referer are attached by the browser and whistle proxy rules still apply — a replay can answer differently from the recorded one. ' +
+      'Args: requestId (required), allowUnsafe (required for POST/PUT/PATCH/DELETE, because those repeat a side effect). ' +
+      'Only xhr/fetch requests are replayable. `body` is the first 8KB (see truncated/responseSize); read the whole thing with get_network({requestId: replayedId}) — the replay is recorded as a new request whose replayedFrom points back at the original. ' +
+      'A request whose body was collapsed to "[object Blob]"-style text at capture time is refused (those bytes are gone). Nothing is overridden — to change a parameter, build the call with eval_js instead.',
+    inputSchema: {
+      requestId: z.string().describe('requestId of the recorded request (the network item id from get_network)'),
+      allowUnsafe: z.boolean().optional().describe('must be true to replay non-idempotent methods (POST/PUT/PATCH/DELETE)'),
+    },
+  });
+
   tool('eval_js', {
     title: 'Evaluate JavaScript in the page',
     description:

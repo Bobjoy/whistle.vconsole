@@ -16,7 +16,7 @@ const args = process.argv.slice(2);
 const port = Number(args[0]) || 9443;
 const probeDistIdx = args.indexOf('--probe-dist');
 const probeDist = probeDistIdx > -1 ? args[probeDistIdx + 1] :
-  path.resolve(__dirname, '../../packages/probe/dist/vconsole.min.js');
+  path.resolve(__dirname, '../../packages/vconsole/dist/vconsole.min.js');
 const probeCode = fs.readFileSync(probeDist, 'utf8');
 
 const server = http.createServer((req, res) => {
@@ -47,9 +47,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (u.pathname === '/' || u.pathname === '/index.html') {
+  // any page in this directory, so cdn.html (外链 + 隧道示例) is reachable too
+  const page = u.pathname === '/' ? '/index.html' : u.pathname;
+  if (/^\/[\w.-]+\.html$/.test(page)) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(fs.readFileSync(path.join(__dirname, 'index.html')));
+    res.end(fs.readFileSync(path.join(__dirname, path.basename(page))));
     return;
   }
 

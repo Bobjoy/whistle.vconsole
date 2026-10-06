@@ -10,6 +10,7 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { HubConfig } from './hub.js';
@@ -24,6 +25,7 @@ export type { ToolCallOptions, McpToolResult } from './tools.js';
 export { createMcpServer } from './mcpServer.js';
 export type { ToolBackend } from './mcpServer.js';
 export { parseDeviceLabel } from './deviceLabel.js';
+export { PROTOCOL_VERSION } from '@bobjoy/vconsole-protocol';
 
 export const VERSION = '0.3.0';
 
@@ -31,6 +33,11 @@ export interface StartOptions extends Partial<HubConfig> {
   /** log function for diagnostics; MUST NOT write to stdout (default: console.error) */
   log?: (msg: string) => void;
 }
+
+/**
+ * The loopback peer needs no token, a LAN peer does — see `hasAccess` in hub.ts.
+ */
+export { isLoopback, hasAccess } from './hub.js';
 
 export function getLanAddresses(port: number): { address: string; iface: string }[] {
   const out: { address: string; iface: string }[] = [];
@@ -45,19 +52,39 @@ export function getLanAddresses(port: number): { address: string; iface: string 
   return out;
 }
 
-export function probeSnippet(serverUrl: string): string {
-  return `import VConsole from '@bobjoy/vconsole';
-
-new VConsole({
-  serverUrl: '${serverUrl}',
-  // deviceName: 'my-test-phone',  // optional label
-  // hideUI: true,                 // hide the vConsole button (agent-only)
-});`;
-}
-
 function isAddrInUse(e: unknown): boolean {
   const anyErr = e as any;
   return anyErr?.code === 'EADDRINUSE' || /EADDRINUSE/.test(String(anyErr?.message));
+}
+
+/**
+ * The one directory every on-disk piece of a running service shares, so the
+ * daemon's pid/log files and the hub discovery file can never drift apart.
+ */
+export function stateDir(): string {
+  return path.join(os.homedir(), '.whistle-vconsole');
+}
+
+export const pidFilePath = () => path.join(stateDir(), 'v2.pid');
+export const logFilePath = () => path.join(stateDir(), 'v2.log');
+
+const HUB_FILE = path.join(stateDir(), 'hub.json');
+
+/** the discovery file's path — `v2 status` reads it to print the probe endpoint */
+export const hubFilePath = () => HUB_FILE;
+
+/**
+ * The token the hub owning `port` published. The port has to match: this file is
+ * one path shared by every hub on the machine, so a leftover from another run
+ * (a test hub, a hub since moved port) must not be read as the live one.
+ */
+function storedToken(port: number): string {
+  try {
+    const j = JSON.parse(fs.readFileSync(HUB_FILE, 'utf8'));
+    return Number(j.port) === port ? String(j.token || '') : '';
+  } catch {
+    return '';
+  }
 }
 
 export interface StartedVconsoleMcp {
@@ -75,6 +102,8 @@ export interface CreatedBackend {
   hub: Hub;
   proxy?: ProxyHub;
   port: number;
+  /** token non-loopback peers must present; the loopback MCP client never needs it */
+  token: string;
 }
 
 /**
@@ -86,10 +115,15 @@ export async function createBackend(opts: StartOptions = {}): Promise<CreatedBac
   const log = opts.log || ((msg: string) => console.error(msg));
   const port = Number(opts.port ?? process.env.WHISTLE_VCONSOLE_PORT ?? 9528);
   const host = String(opts.host ?? process.env.WHISTLE_VCONSOLE_HOST ?? '0.0.0.0');
+  // an already-running hub's token wins over a generated one, so a proxy-mode
+  // process never prints an endpoint that its own hub would refuse
+  const token = String(opts.token ?? process.env.WHISTLE_VCONSOLE_TOKEN ?? '') || storedToken(port)
+    || crypto.randomBytes(8).toString('hex');
 
   const hub = new Hub({
     host,
     port,
+    token,
     logBufferMax: opts.logBufferMax ?? 2000,
     networkBufferMax: opts.networkBufferMax ?? 500,
     sessionTtlMs: opts.sessionTtlMs ?? 30 * 60_000,
@@ -116,11 +150,11 @@ export async function createBackend(opts: StartOptions = {}): Promise<CreatedBac
     // discovery file: the whistle plugin (and other local tools) read this
     // to find the running hub without any manual configuration
     try {
-      const dir = path.join(os.homedir(), '.whistle-vconsole');
+      const dir = stateDir();
       fs.mkdirSync(dir, { recursive: true });
       const lan = getLanAddresses(port)[0]?.address || '127.0.0.1';
-      fs.writeFileSync(path.join(dir, 'hub.json'), JSON.stringify({
-        port, lan, updatedAt: new Date().toISOString(),
+      fs.writeFileSync(HUB_FILE, JSON.stringify({
+        port, lan, token, updatedAt: new Date().toISOString(),
       }, null, 2));
     } catch (e) {
       log(`  (could not write ~/.whistle-vconsole/hub.json: ${(e as Error).message})`);
@@ -153,12 +187,12 @@ export async function createBackend(opts: StartOptions = {}): Promise<CreatedBac
         },
       };
 
-  return { backend, mode, hub, proxy, port };
+  return { backend, mode, hub, proxy, port, token };
 }
 
 export async function startVconsoleMcp(opts: StartOptions = {}): Promise<StartedVconsoleMcp> {
   const log = opts.log || ((msg: string) => console.error(msg));
-  const { backend, mode, hub, proxy, port } = await createBackend(opts);
+  const { backend, mode, hub, proxy, port, token } = await createBackend(opts);
   const mcpServer = createMcpServer(backend, VERSION);
 
   // diagnostics go to stderr; stdout belongs to the MCP stdio protocol
@@ -166,12 +200,11 @@ export async function startVconsoleMcp(opts: StartOptions = {}): Promise<Started
   if (mode === 'hub') {
     log(`  ws hub listening on port ${port}`);
     for (const { address, iface } of getLanAddresses(port)) {
-      log(`  probe endpoint: ws://${address}:${port}  (${iface})`);
+      // anything off this machine has to carry the token (see isLoopback)
+      log(`  probe endpoint: ws://${address}:${port}?t=${token}  (${iface})`);
     }
-    log('  ---- probe init snippet (paste into your H5 entry, dev only) ----');
-    const firstLan = getLanAddresses(port)[0]?.address || 'localhost';
-    log(probeSnippet(`ws://${firstLan}:${port}`));
-    log('  ----------------------------------------------------------------');
+    // standalone deliberately prints no pasteable snippet: it never injects
+    log('  探针接入要自己动手：npm 包 @bobjoy/vconsole 或 CDN 外链；面板与 /probe.js 属于 `v2 start` 的 HTTP 面。https 页面只能连 wss://，前面自己架 TLS 隧道（docs/adr/0002）');
   } else {
     log(`  sharing existing vconsole hub on port ${port}; probe endpoint unchanged`);
   }

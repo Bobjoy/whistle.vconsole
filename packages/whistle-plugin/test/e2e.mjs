@@ -1,6 +1,6 @@
 /**
  * End-to-end test:
- *   1. MCP client (stdio) spawns the real `whistle-vconsole` server process
+ *   1. MCP client (stdio) spawns the real `v2` server process (bare run)
  *   2. a fake probe (Node WS client) connects to the server's WebSocket hub
  *      and replays the full protocol: hello, logs, network, command results
  *   3. every MCP tool is called and its result asserted
@@ -10,6 +10,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import os from 'node:os';
 import { WebSocket } from 'ws';
 
 const PORT = 9340;
@@ -38,7 +39,7 @@ const b64 = (bytes) => Buffer.from(bytes).toString('base64');
 // ---------------------------------------------------------------------------
 
 function startFakeProbe() {
-  const state = { connected: false, commands: [] };
+  const state = { connected: false, commands: [], lastReplayId: '' };
   const storage = { cookies: { sid: 'abc' }, localStorage: { k: 'v' }, sessionStorage: {} };
   let ws = null;
 
@@ -60,7 +61,7 @@ function startFakeProbe() {
         protocol: 1,
         sessionId: 'e2e-session-1',
         deviceName: 'e2e-fake-phone',
-        probeVersion: '3.16.0-alpha-mcp.1',
+        probeVersion: '3.16.0',
         page: {
           url: 'https://example.com/demo', title: 'E2E Demo', referrer: '',
           userAgent: 'e2e-agent', platform: 'test', language: 'zh-CN',
@@ -129,7 +130,7 @@ function startFakeProbe() {
           const bucket = { local: 'localStorage', session: 'sessionStorage', cookie: 'cookies' }[msg.args.storage];
           if (!bucket) { reply(false, undefined, `unknown storage: ${msg.args.storage}`); break; }
           if (bucket === 'cookies' && msg.args.key === 'httponly') {
-            reply(false, undefined, 'Error: cookie "httponly" is not writable from JS (HttpOnly?)');
+            reply(false, undefined, 'cookie "httponly" is not writable from JS (HttpOnly?)');
             break;
           }
           storage[bucket][msg.args.key] = msg.args.value;
@@ -138,6 +139,25 @@ function startFakeProbe() {
         }
         case 'page_info':
           reply(true, { url: 'https://example.com/demo', title: 'E2E Demo', userAgent: 'e2e-agent', viewport: { width: 390, height: 844, dpr: 3 } });
+          break;
+        case 'replay':
+          // the page does the sending; the fake probe only reports what it "got"
+          state.lastReplayId = msg.args.requestId;
+          if (msg.args.requestId === 'req-upload') {
+            // the lossy-body check is page-side: the hub never sees the real shape
+            reply(false, undefined, 'request req-upload was captured with its body formatted ([object File]), so the original bytes are gone and it cannot be replayed — nothing was sent.');
+            break;
+          }
+          reply(true, {
+            status: 204,
+            statusText: 'No Content',
+            responseHeader: '{content-type: application/json}',
+            body: 'x'.repeat(8192),
+            truncated: true,
+            responseSize: 9000,
+            costTime: 12,
+            replayedId: 'req-2',
+          });
           break;
         case 'screenshot':
           // 1x1 red PNG
@@ -163,6 +183,8 @@ async function main() {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [CLI, '--port', String(PORT)],
+    // a fixed token, so the non-loopback gate below can be asserted
+    env: { ...process.env, WHISTLE_VCONSOLE_TOKEN: 'e2e-token' },
     stderr: 'pipe',
   });
   const client = new Client({ name: 'e2e-client', version: '0.1.0' });
@@ -341,10 +363,102 @@ async function main() {
   const img = r.content[0];
   check('screenshot returns image block', img.type === 'image' && img.mimeType === 'image/png' && img.data.startsWith('iVBOR'));
 
+  // --- replay_request: the hub gates, the page sends
+  probe.ws().send(JSON.stringify({
+    type: 'network',
+    items: [
+      {
+        id: 'req-post', requestType: 'xhr', method: 'POST', url: 'https://example.com/api/order',
+        name: 'order', status: 200, statusText: 'OK', costTime: 45, responseSize: 12,
+        requestHeader: '{content-type: application/json}', postData: '{good: 1}', response: '{ok: true}',
+        startTime: Date.now() - 500, endTime: Date.now() - 455,
+      },
+      {
+        id: 'req-upload', requestType: 'fetch', method: 'POST', url: 'https://example.com/api/upload',
+        name: 'upload', status: 200, statusText: 'OK', costTime: 60,
+        requestHeader: '{content-type: multipart/form-data; boundary=abc}', postData: '{file: [object File]}',
+        startTime: Date.now() - 400, endTime: Date.now() - 340,
+      },
+      {
+        id: 'img-1', requestType: 'img', method: 'GET', url: 'https://example.com/pic.png',
+        name: 'pic.png', status: 200, statusText: 'OK', startTime: Date.now() - 300, endTime: Date.now() - 250,
+      },
+      // the item a replay gets recorded as, pointing back at its source
+      {
+        id: 'req-2', requestType: 'fetch', method: 'GET', url: 'https://example.com/api/test',
+        name: 'test', status: 204, statusText: 'No Content', responseSize: 9000, replayedFrom: 'req-1',
+        startTime: Date.now() - 100, endTime: Date.now() - 50,
+      },
+    ],
+  }));
+  await sleep(200);
+  const cmdsBeforeReplay = probe.state.commands.length;
+
+  r = await client.callTool({ name: 'replay_request', arguments: { requestId: 'nope' } });
+  check('replay_request reuses the evicted-request wording',
+    r.isError === true && /request not found: nope \(buffers may have been evicted/.test(r.content[0].text), r.content[0].text);
+
+  r = await client.callTool({ name: 'replay_request', arguments: { requestId: 'img-1' } });
+  check('replay_request refuses a request type it cannot replay',
+    r.isError === true && /only xhr and fetch/.test(r.content[0].text)
+      && probe.state.commands.length === cmdsBeforeReplay, r.content[0].text);
+
+  r = await client.callTool({ name: 'replay_request', arguments: { requestId: 'req-post' } });
+  check('replay_request blocks a non-idempotent method without allowUnsafe',
+    r.isError === true && /not idempotent/.test(r.content[0].text) && /allowUnsafe/.test(r.content[0].text)
+      && probe.state.commands.length === cmdsBeforeReplay, r.content[0].text);
+
+  r = await client.callTool({ name: 'replay_request', arguments: { requestId: 'req-1' } });
+  const rep = JSON.parse(r.content[0].text);
+  check('replay_request returns this run\'s response, not the recorded one',
+    rep.status === 204 && rep.costTime === 12 && rep.responseHeader === '{content-type: application/json}', r.content[0].text);
+  check('replay_request caps the body and reports the real size',
+    rep.body.length === 8192 && rep.truncated === true && rep.responseSize === 9000);
+  check('replay_request hands the page only the requestId',
+    probe.state.commands.filter((c) => c === 'replay').length === 1 && probe.state.lastReplayId === 'req-1');
+  check('replay_request returns replayedId for reading the full response back', rep.replayedId === 'req-2');
+
+  // the lossy-body gate lives page-side (the hub copy can be truncated), so the
+  // command is sent and the page answers with the refusal
+  r = await client.callTool({ name: 'replay_request', arguments: { requestId: 'req-upload', allowUnsafe: true } });
+  check('replay_request surfaces the page-side refusal of a body collapsed at capture time',
+    r.isError === true && /\[object File\]/.test(r.content[0].text) && /cannot be replayed/.test(r.content[0].text)
+      && probe.state.commands.filter((c) => c === 'replay').length === 2, r.content[0].text);
+
+  r = await client.callTool({ name: 'get_network', arguments: { requestId: rep.replayedId } });
+  check('the replayed request is queryable as a normal network item',
+    JSON.parse(r.content[0].text).replayedFrom === 'req-1', r.content[0].text);
+
+  r = await client.callTool({ name: 'get_network', arguments: { urlFilter: '/api/test' } });
+  net = JSON.parse(r.content[0].text);
+  check('replayedFrom is visible in list rows too',
+    net.items.some((i) => i.id === 'req-2' && i.replayedFrom === 'req-1'), r.content[0].text);
+
+  r = await client.callTool({ name: 'replay_request', arguments: { requestId: 'req-post', allowUnsafe: true } });
+  check('replay_request sends a non-idempotent method once allowUnsafe is given',
+    !r.isError && probe.state.lastReplayId === 'req-post', r.content[0].text);
+
+  // --- token gate: loopback is the developer's own machine, a LAN peer is not
+  const lan4 = Object.values(os.networkInterfaces()).flat()
+    .find((a) => a && a.family === 'IPv4' && !a.internal)?.address;
+  const closeCode = (token) => new Promise((resolve) => {
+    const ws = new WebSocket(`ws://${lan4}:${PORT}${token ? `?t=${token}` : ''}`);
+    ws.on('error', () => {});
+    ws.on('open', () => setTimeout(() => ws.close(1000), 120));
+    ws.on('close', (code) => resolve(code));
+  });
+  if (!lan4) {
+    console.log('  skip  token gate: this machine has no LAN IPv4 interface');
+  } else {
+    check('hub refuses a probe arriving on the LAN interface without a token',
+      await closeCode('') === 4001);
+    check('hub accepts the same probe carrying ?t=<token>',
+      await closeCode('e2e-token') === 1000);
+  }
+
   // --- select_session error path
   r = await client.callTool({ name: 'select_session', arguments: { sessionId: 'nope' } });
   check('select_session rejects unknown id', r.isError === true);
-
   console.log(`\ne2e result: ${passed} passed, ${failed} failed`);
   await client.close();
   probe.ws().close();

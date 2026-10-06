@@ -5,3 +5,5 @@ dist/
 *.log
 *.tgz
 .vite/
+# 本机 MCP 客户端配置：内含绝对路径，且各人机器不一样
+.zcode/

@@ -2,8 +2,12 @@
   "name": "@bobjoy/vconsole-protocol",
   "version": "0.3.0",
   "private": true,
-  "description": "探针（浏览器侧）与 MCP server（Node 侧）共享的消息协议。单一 TS 源，构建期由 webpack / esbuild 各自内联进 bundle，发布物里不存在本包。",
+  "description": "跨端消息协议的 Node 侧副本（探针侧那份住在 fork Bobjoy/vConsole 的 src/mcp/protocol.ts，改协议要同轮动两处）。构建期由 esbuild 内联进 bundle，发布物里不存在本包。",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bobjoy/whistle.vconsole.git"
+  },
   "type": "module",
   "main": "./src/protocol.ts",
   "types": "./src/protocol.ts",

@@ -1,20 +1,21 @@
 /**
- * MCP-over-HTTP e2e — the shape served by the whistle plugin:
- *   hub (or backend) + stateless Streamable HTTP endpoint, exercised with the
- *   official SDK StreamableHTTP client covering every read tool and sessionId
- *   targeting. This is the regression that guards the `w2 start` deployment.
+ * MCP-over-HTTP e2e — the shape both start-up forms serve (whistle plugin and
+ * `v2 start`): it drives the shared createHttpService() with the official SDK
+ * StreamableHTTP client, covering every read tool, sessionId targeting, the
+ * panel/probe assets and the token gateway. This is the regression that guards
+ * the `w2 start` deployment and the standalone daemon at the same time.
  *
  * Run: node packages/whistle-plugin/test/http.e2e.mjs
  */
 
-import http from 'node:http';
+import vm from 'node:vm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { WebSocket } from 'ws';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { createBackend, createMcpServer, parseDeviceLabel, VERSION } = require('../dist/index.cjs');
+const { createHttpService } = require('../dist/httpService.cjs');
+const { hasAccess, parseDeviceLabel, PROTOCOL_VERSION } = require('../dist/index.cjs');
 const buildPanelHtml = require('../lib/panel.js');
 const { splitCardText } = buildPanelHtml;
 
@@ -34,13 +35,13 @@ function check(name, cond, detail = '') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function makeProbe(sessionId, url, title, deviceName = 'http-e2e-phone') {
+function makeProbe(sessionId, url, title, deviceName = 'http-e2e-phone', protocol = PROTOCOL_VERSION) {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}?sid=${sessionId}`);
   const ready = new Promise((resolve, reject) => {
     ws.on('open', () => {
       ws.send(JSON.stringify({
         type: 'hello',
-        protocol: 1,
+        protocol,
         sessionId,
         deviceName,
         probeVersion: 'http-e2e',
@@ -64,6 +65,7 @@ function makeProbe(sessionId, url, title, deviceName = 'http-e2e-phone') {
       get_storage: { cookies: [], localStorage: [{ key: 'from', value: sessionId }], sessionStorage: [] },
       page_info: { url, title, referrer: '', userAgent: 'e2e-http', platform: 'test', language: 'zh', viewport: { width: 390, height: 844 }, memory: { usedJSHeapSize: 1, totalJSHeapSize: 2 } },
       screenshot: { format: 'png', width: 9, height: 9, dataBase64: 'iVBORw0KGgo=' },
+      replay: { status: 201, statusText: '201', body: '{"created":true}', truncated: false, responseSize: 15, costTime: 7, replayedId: 'a-req-2' },
     };
     ws.send(JSON.stringify({
       type: 'result', reqId: msg.reqId, ok: true,
@@ -75,44 +77,26 @@ function makeProbe(sessionId, url, title, deviceName = 'http-e2e-phone') {
 }
 
 async function main() {
-  // --- same wiring as packages/whistle-plugin/lib/runtime.js ---------------
-  const { backend, hub } = await createBackend({ port: PORT });
+  // --- the access rule lib/runtime.js and hub.ts both call (pure, so it is
+  // asserted once rather than through a second bound port) ------------------
+  check('access: loopback needs no token',
+    hasAccess('/api/tool', '127.0.0.1', 'tk') === true && hasAccess('/mcp', '::1', 'tk') === true
+      && hasAccess('/api/tool', '::ffff:127.0.0.1', 'tk') === true);
+  check('access: a LAN peer needs the matching ?t=',
+    hasAccess('/api/tool?t=tk', '192.168.1.20', 'tk') === true
+      && hasAccess('/api/tool', '192.168.1.20', 'tk') === false
+      && hasAccess('/api/tool?t=guess', '192.168.1.20', 'tk') === false);
+  check('access: an unconfigured token still refuses a LAN peer',
+    hasAccess('/api/tool', '10.0.0.5', undefined) === false);
 
-  // stateless wiring that mirrors packages/whistle-plugin/lib/runtime.js:
-  // a fresh McpServer + transport per request, body parsed first (a shared
-  // transport stalls the SDK client on initialize)
-  const httpServer = http.createServer(async (req, res) => {
-    if (req.method !== 'POST') {
-      res.writeHead(405, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'POST only (stateless mode)' }));
-      return;
-    }
-    const raw = await new Promise((r) => {
-      const chunks = [];
-      req.on('data', (c) => chunks.push(c));
-      req.on('end', () => r(Buffer.concat(chunks)));
-    });
-    let parsed;
-    try {
-      parsed = JSON.parse(raw.toString() || '{}');
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null }));
-      return;
-    }
-    const server = createMcpServer(backend, VERSION);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // stateless: every POST is independent
-      enableJsonResponse: true,
-    });
-    res.on('close', () => {
-      try { transport.close(); } catch { /* noop */ }
-      try { server.close(); } catch { /* noop */ }
-    });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, parsed);
+  // --- the ONE HTTP surface both entries share (whistle runtime + v2 start) --
+  const service = await createHttpService({
+    port: PORT,
+    httpPort: PORT + 1,
+    host: '127.0.0.1',
+    panelHtml: buildPanelHtml(),
   });
-  await new Promise((resolve) => httpServer.listen(PORT + 1, '127.0.0.1', resolve));
+  const { backend } = service;
 
   const client = new Client({ name: 'http-e2e', version: '0.1.0' });
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT + 1}/mcp`)));
@@ -127,7 +111,10 @@ async function main() {
       { id: 'a-log-2', type: 'error', repeated: 0, date: Date.now(), args: ['boom A'] },
     ],
   }));
-  const b = await makeProbe('dev-b', 'https://example.com/b', 'Page B');
+  // B reports a NEWER protocol on purpose: ADR-008's soft check must stay
+  // invisible for A and visible-but-harmless for B (every B assertion below
+  // still has to pass over a mismatched session).
+  const b = await makeProbe('dev-b', 'https://example.com/b', 'Page B', 'http-e2e-phone', PROTOCOL_VERSION + 1);
   await b.ready;
   b.ws.send(JSON.stringify({
     type: 'logs',
@@ -148,6 +135,13 @@ async function main() {
   check('list_sessions shows both probes', sessions.length === 2, JSON.stringify(sessions.map((s) => s.sessionId)));
   check('list_sessions ordered by connection time', sessions[0].sessionId === 'dev-a' && sessions[1].sessionId === 'dev-b',
     JSON.stringify(sessions.map((s) => s.sessionId)));
+
+  // 1b. protocol soft check (ADR-008): mismatch is a signal, never a cutoff
+  check('protocol: matching probe reports no protocolMismatch',
+    !('protocolMismatch' in sessions[0]), JSON.stringify(sessions[0]));
+  check('protocol: mismatched probe keeps its session and carries the number',
+    sessions[1].online === true && sessions[1].protocolMismatch === PROTOCOL_VERSION + 1,
+    JSON.stringify(sessions[1]));
 
   // 2. select_session + default targeting follows the active session
   r = await client.callTool({ name: 'select_session', arguments: { sessionId: 'dev-a' } });
@@ -202,6 +196,24 @@ async function main() {
   r = await client.callTool({ name: 'wait_for', arguments: { sessionId: 'dev-b', kind: 'log', contains: 'never-logs-this', timeoutMs: 800 } });
   check('wait_for timeout -> clean error result', r.isError === true && /timeout|timed out|no match/i.test(text(r)), text(r));
 
+  // 10. replay_request on the HTTP/MCP surface the deployment actually serves
+  const tools = await client.listTools();
+  check('13 tools registered over HTTP',
+    tools.tools.length === 13 && tools.tools.some((t) => t.name === 'replay_request'), String(tools.tools.length));
+
+  r = await client.callTool({ name: 'replay_request', arguments: { sessionId: 'dev-a', requestId: 'evicted-1' } });
+  check('replay_request reports an evicted requestId', r.isError === true && /request not found/.test(text(r)), text(r));
+
+  a.ws.send(JSON.stringify({
+    type: 'network',
+    items: [{ id: 'a-req-1', requestType: 'fetch', method: 'GET', url: 'https://example.com/a/config', status: 200, statusText: '200', startTime: Date.now() - 100, endTime: Date.now() - 50 }],
+  }));
+  await sleep(150);
+  r = await client.callTool({ name: 'replay_request', arguments: { sessionId: 'dev-a', requestId: 'a-req-1' } });
+  const replayed = JSON.parse(text(r));
+  check('replay_request returns the fresh response over HTTP',
+    replayed.status === 201 && replayed.replayedId === 'a-req-2' && replayed.truncated === false, text(r));
+
   // device labels: Huawei puts "HarmonyOS" between the Android version and the
   // model, which the old single-token regex could not cross -> device/OS vanished
   const HUAWEI_TABLET_UA = 'Mozilla/5.0 (Linux; Android 12; HarmonyOS; DBR-W00; HMSCore 6.16.4.352) '
@@ -252,6 +264,27 @@ async function main() {
   // the panel must run this same implementation (injected by .toString())
   check('card: panel html embeds splitCardText source',
     buildPanelHtml().indexOf('const splitCardText = function splitCardText(label, deviceName)') > -1);
+  // network detail carries the replay entry point (button + confirm + origin tag)
+  const panelHtml = buildPanelHtml();
+  check('panel: network detail has a replay button wired to the tool',
+    panelHtml.indexOf('原样再发一次') > -1 && panelHtml.indexOf("api('replay_request'") > -1);
+  check('panel: non-idempotent replay asks first and replayed rows say where they came from',
+    /askFirst && !window\.confirm/.test(panelHtml) && panelHtml.indexOf('重放自') > -1);
+  check('panel: device card renders the protocol mismatch line',
+    /s\.protocolMismatch/.test(panelHtml) && panelHtml.indexOf('协议') > -1);
+  // the panel html is a build-time template literal: a `\` in it is eaten before
+  // the browser sees the script, so a substring match can pass on broken code.
+  // Parse the emitted script instead — that is the only check that catches it.
+  let panelParseErr = '';
+  for (const m of panelHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    try {
+      new vm.Script(m[1]);
+    } catch (e) {
+      panelParseErr = e.message;
+      break;
+    }
+  }
+  check('panel: emitted inline script parses', panelParseErr === '', panelParseErr);
   // generic classes are gone: the OS segment already says PC / standalone browser
   check('label: desktop Chrome shows no PC badge',
     parseDeviceLabel('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36')
@@ -280,8 +313,7 @@ async function main() {
   a.ws.close();
   b.ws.close();
   await client.close();
-  try { hub.stop(); } catch { /* already stopped */ }
-  httpServer.close();
+  service.stop();
 
   console.log(`\nhttp e2e: ${passed} passed, ${failed} failed`);
   process.exit(failed > 0 ? 1 : 0);

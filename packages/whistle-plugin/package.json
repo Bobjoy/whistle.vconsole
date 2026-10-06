@@ -4,7 +4,7 @@
   "description": "whistle vconsole 插件：随 w2 启动探针 hub + MCP server + 设备面板，并自动给被代理的 H5 页面注入 @bobjoy/vconsole 探针（页面零改动）。MCP server 源码在本包 src/ 下，dist/*.cjs 为构建产物。",
   "main": "index.js",
   "bin": {
-    "whistle-vconsole": "./dist/cli.cjs"
+    "v2": "./dist/cli.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -12,7 +12,6 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@bobjoy/vconsole-protocol": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.0",
     "esbuild": "^0.28.2",
@@ -27,9 +26,9 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "bundle": "esbuild src/index.ts src/cli.ts --bundle --platform=node --format=cjs --outdir=dist --out-extension:.js=.cjs --external:@modelcontextprotocol/sdk --external:ws --external:zod",
+    "bundle": "esbuild src/index.ts src/cli.ts src/httpService.ts --bundle --platform=node --format=cjs --outdir=dist --out-extension:.js=.cjs --external:@modelcontextprotocol/sdk --external:ws --external:zod",
     "build": "npm run typecheck && npm run bundle && node ./build.mjs",
-    "dev": "esbuild src/index.ts src/cli.ts --bundle --platform=node --format=cjs --outdir=dist --out-extension:.js=.cjs --external:@modelcontextprotocol/sdk --external:ws --external:zod --watch"
+    "dev": "esbuild src/index.ts src/cli.ts src/httpService.ts --bundle --platform=node --format=cjs --outdir=dist --out-extension:.js=.cjs --external:@modelcontextprotocol/sdk --external:ws --external:zod --watch"
   },
   "keywords": [
     "whistle",
@@ -49,7 +48,7 @@
   "author": "bobjoy",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tencent/vConsole.git"
+    "url": "git+https://github.com/Bobjoy/whistle.vconsole.git"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",

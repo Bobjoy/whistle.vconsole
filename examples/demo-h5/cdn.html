@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>demo-h5 · 公网外链接入示例</title>
+</head>
+<body>
+  <h3>探针来自 CDN</h3>
+  <p id="hint"></p>
+  <a href="/index.html">回到用本地产物的 demo 页</a>
+
+  <!--
+    和 index.html 的差别只有一处：探针是外联 js，页面不依赖本地构建产物。
+    这就是发布到公网的 H5 的形态 —— 但 hub 仍然只在你的局域网或隧道另一端：
+      ?ws=wss%3A%2F%2F<你的隧道域名>%2F%3Ft%3D<token>
+    https 页面只能连 wss://（ws:// 会被当作混合内容直接拦掉），所以公网接入
+    要么前置一层 TLS 隧道，要么把页面退回 http 在局域网里跑。
+  -->
+  <script src="https://unpkg.com/@bobjoy/vconsole@3.16.0/dist/vconsole.min.js"
+          onerror="document.getElementById('hint').textContent='取不到 CDN 上的探针：包还没发布到 npm，或当前是离线网络'"></script>
+  <script>
+    var qs = new URLSearchParams(location.search);
+    var serverUrl = qs.get('ws') || 'ws://' + location.hostname + ':9528';
+    if (!window.VConsole) {
+      document.getElementById('hint').textContent = 'VConsole 未加载（离线，或该版本尚未发布到 npm）';
+    } else {
+      new VConsole({ serverUrl: serverUrl });
+      document.getElementById('hint').textContent = '探针已加载，serverUrl=' + serverUrl;
+    }
+  </script>
+</body>
+</html>

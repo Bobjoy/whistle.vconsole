@@ -8,7 +8,7 @@ import { WebSocket } from 'ws';
 import type {
   ToolApiName, ApiMsg, CmdResultMsg,
 } from '@bobjoy/vconsole-protocol';
-import { MCP_PROXY_SESSION_ID } from '@bobjoy/vconsole-protocol';
+import { MCP_PROXY_SESSION_ID, PROTOCOL_VERSION } from '@bobjoy/vconsole-protocol';
 import type { McpToolResult } from './tools.js';
 
 export interface ProxyHubOptions {
@@ -57,7 +57,7 @@ export class ProxyHub {
       ws.on('open', () => {
         ws.send(JSON.stringify({
           type: 'hello',
-          protocol: 1,
+          protocol: PROTOCOL_VERSION,
           sessionId: MCP_PROXY_SESSION_ID,
           probeVersion: 'mcp-proxy',
           page: {

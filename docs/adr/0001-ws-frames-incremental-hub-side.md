@@ -24,7 +24,7 @@ ws_frames({ sessionId?, wsUrl?, sinceFrameTime?, limit=50 })
 
 ## 备选与否决理由
 
-- **扩 `get_network` 加 `type=ws` + list 行保留 `messages`**：list 行变胖、与"list 保持轻量"的既有原则（HANDOFF 第六轮 Network 瘦身）冲突，且语义混淆（一个 list 工具混入帧级增量）。否决。
+- **扩 `get_network` 加 `type=ws` + list 行保留 `messages`**：list 行变胖、与"list 保持轻量"的既有原则（第六轮 Network 瘦身时定下）冲突，且语义混淆（一个 list 工具混入帧级增量）。否决。
 - **探针侧独立环形缓冲**：要动探针协议双副本（`packages/whistle-plugin/src/protocol.ts` + `packages/probe/src/mcp/protocol.ts` 同步加帧级消息类型），改动面大、MVP 不划算。否决（留 2.x 再议）。
 - **`dropped` 精确计数**：环形挤帧只能给下界，精确值需额外簿记；`oldestSeq` 已足够让 agent 判断。否决。
 

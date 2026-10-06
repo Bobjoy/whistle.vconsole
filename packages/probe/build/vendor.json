@@ -1,8 +1,0 @@
-{
-  "name": [
-    "core-js/stable/symbol",
-    "mutation-observer",
-    "svelte/store",
-    "svelte"
-  ]
-}

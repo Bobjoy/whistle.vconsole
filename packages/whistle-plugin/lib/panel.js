@@ -92,8 +92,8 @@ module.exports = function buildPanelHtml() {
   .logmeta { color: #86909c; margin-right: 8px; }
   .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .toolbar select, .toolbar input { font-size: 12px; padding: 4px 8px; border: 1px solid #e5e6eb; border-radius: 6px; }
-  .toolbar button, #console button, #sto-body button { font-size: 12px; padding: 4px 12px; border: 1px solid #e5e6eb; border-radius: 6px; background: #fff; cursor: pointer; white-space: nowrap; flex: none; }
-  .toolbar button:hover, #console button:hover, #sto-body button:hover { border-color: #165dff; color: #165dff; }
+  .toolbar button, #console button, #sto-body button, #net-body button { font-size: 12px; padding: 4px 12px; border: 1px solid #e5e6eb; border-radius: 6px; background: #fff; cursor: pointer; white-space: nowrap; flex: none; }
+  .toolbar button:hover, #console button:hover, #sto-body button:hover, #net-body button:hover { border-color: #165dff; color: #165dff; }
   #sto-body input, #sto-body textarea { width: 100%; font-size: 12px; font-family: ui-monospace, Menlo, monospace; padding: 4px 8px; border: 1px solid #165dff; border-radius: 6px; }
   #sto-body textarea { resize: vertical; min-height: 56px; line-height: 1.5; }
   .sto-acts { display: flex; gap: 6px; flex-wrap: nowrap; }
@@ -210,9 +210,13 @@ module.exports = function buildPanelHtml() {
   const netCache = {};
   // injected from the Node-side definition above so panel and unit test share one implementation
   const splitCardText = ${splitCardText.toString()};
+  // a panel opened from another machine must carry the hub token it was handed
+  // in its own URL; on the dev machine (loopback) there is nothing to carry
+  const T = new URLSearchParams(location.search).get('t') || '';
+  const TQ = T ? '?t=' + encodeURIComponent(T) : '';
 
   async function api(name, args, sessionId) {
-    const r = await fetch('/api/tool', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const r = await fetch('/api/tool' + TQ, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, args: args || {}, sessionId }) });
     const result = await r.json();
     if (result.isError) { throw new Error((result.content[0] || {}).text || 'tool error'); }
@@ -248,10 +252,15 @@ module.exports = function buildPanelHtml() {
         const text = splitCardText(s.deviceLabel || s.sessionId, s.deviceName);
         const label = text.label;
         const muted = text.muted ? '<span class="muted">(' + esc(text.muted) + ')</span>' : '';
+        // protocol drift is a warning, never a block (ADR-008): say which number
+        // the page reported so the operator can tell old page from new hub
+        const proto = s.protocolMismatch === undefined ? ''
+          : '<span class="muted">(协议 ' + esc(String(s.protocolMismatch)) + ' 与本端不符)</span>';
         return '<div class="card' + (current === s.sessionId ? ' sel' : '') + '" onclick="openSession(\\'' + s.sessionId + '\\')">' +
         '<div class="row1"><span class="dot ' + (s.online ? 'on' : 'off') + '"></span>' +
         '<span class="dev">' + esc(label) + '</span>' +
         muted +
+        proto +
         '</div>' +
         '<div class="row2" title="' + esc(s.url) + '">' + esc(s.title || '') + ' — ' + esc(s.url || '') + '</div>' +
         '<div class="row3">' + esc(s.viewport ? s.viewport.width + '×' + s.viewport.height + ' @' + s.viewport.dpr : '') +
@@ -355,7 +364,9 @@ module.exports = function buildPanelHtml() {
   }
 
   let openDetailId = null;
+  let openDetailData = null;
   let detailHtml = null;
+  let replayState = { forId: '', text: '', body: null };
 
   function buildNetHtml() {
     const items = netCache.list || [];
@@ -372,7 +383,7 @@ module.exports = function buildPanelHtml() {
             '<td>' + esc(r.method) + '</td><td class="url" title="' + esc(r.url) + '">' + esc(r.url) + '</td>' +
             '<td>' + esc(r.status) + '</td><td>' + esc(r.costTime) + 'ms</td><td class="muted">' + esc(r.requestType) + '</td></tr>' + detail;
         }).join('');
-    if (openDetailId && !detailUsed) { openDetailId = null; detailHtml = null; } // item evicted
+    if (openDetailId && !detailUsed) { openDetailId = null; openDetailData = null; detailHtml = null; } // item evicted
     return '<table><thead><tr><th>Method</th><th>URL</th><th>Status</th><th>Time</th><th>Type</th></tr></thead><tbody>' +
       rows + '</tbody></table>';
   }
@@ -386,35 +397,90 @@ module.exports = function buildPanelHtml() {
   }
 
   // click a row → expand its detail inline beneath it (query params / headers /
-  // body); click again to collapse. Detail content is cached in detailHtml so
+  // body / replay); click again to collapse. Detail content is cached in detailHtml so
   // SSE-triggered repaints keep the pane open without refetching.
   async function toggleNet(i) {
     const item = (netCache.list || [])[i];
     if (!item) { return; }
     if (openDetailId === item.id) {
       openDetailId = null;
+      openDetailData = null;
       detailHtml = null;
       repaintNet();
       return;
     }
     openDetailId = item.id;
+    openDetailData = null;
     detailHtml = '<span class="muted">loading…</span>';
     repaintNet();
     try {
-      const d = await api('get_network', { requestId: item.id }, current);
-      detailHtml =
-        '<p style="margin:0 0 8px" class="muted">' + esc(d.requestType || '') + '</p>' +
-        querySection(d.url) +
-        headerSection('请求标头', d.requestHeader) +
-        headerSection('响应标头', d.responseHeader) +
-        payloadSection('请求载荷', d.postData) +
-        payloadSection('响应内容', d.response) +
-        (!d.requestHeader && !d.responseHeader && !d.postData && !d.response ? '<span class="muted">该请求无详细数据（resource 类捕获只有 URL/时序）</span>' : '');
+      openDetailData = await api('get_network', { requestId: item.id }, current);
+      detailHtml = detailBody();
     } catch (e) {
       detailHtml = '<span class="lv-error">' + esc(e.message) + '</span>';
     }
+    paintDetail();
+  }
+
+  function paintDetail() {
     const el = document.getElementById('net-detail');
     if (el) { el.innerHTML = detailHtml; } else { repaintNet(); }
+  }
+
+  function detailBody() {
+    const d = openDetailData;
+    if (!d) { return ''; }
+    return '<p style="margin:0 0 8px" class="muted">' + esc(d.requestType || '') +
+        (d.replayedFrom ? ' · 重放自 ' + esc(d.replayedFrom) : '') + '</p>' +
+      querySection(d.url) +
+      headerSection('请求标头', d.requestHeader) +
+      headerSection('响应标头', d.responseHeader) +
+      payloadSection('请求载荷', d.postData) +
+      payloadSection('响应内容', d.response) +
+      replaySection(d) +
+      (!d.requestHeader && !d.responseHeader && !d.postData && !d.response ? '<span class="muted">该请求无详细数据（resource 类捕获只有 URL/时序）</span>' : '');
+  }
+
+  const IDEMPOTENT_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+  function replaySection(d) {
+    if (d.requestType !== 'xhr' && d.requestType !== 'fetch') { return ''; }
+    const method = String(d.method || 'GET').toUpperCase();
+    const askFirst = IDEMPOTENT_METHODS.indexOf(method) > -1 ? 'false' : 'true';
+    const done = replayState.forId === d.id;
+    return '<details class="hsec" open><summary>重放</summary>' +
+      '<div style="padding:8px 10px;font-size:12px">' +
+        '<button onclick="replayReq(\\'' + d.id + '\\',\\'' + method + '\\',' + askFirst + ')">原样再发一次</button> ' +
+        (done ? replayState.text : '<span class="muted">由页面自己发出，cookie 会自动带上；返回的是这次的响应</span>') +
+      '</div>' +
+      (done && replayState.body != null ? '<pre class="raw">' + esc(replayState.body) + '</pre>' : '') +
+      '</details>';
+  }
+
+  async function replayReq(requestId, method, askFirst) {
+    if (askFirst && !window.confirm(method + ' 不是幂等方法：重放会让服务端再做一次这件事。确定发送？')) { return; }
+    replayState = { forId: requestId, text: '<span class="muted">发送中…</span>', body: null };
+    detailHtml = detailBody();
+    paintDetail();
+    try {
+      // the confirm above is the human half of the non-idempotent gate,
+      // so the hub-side gate is told it is authorised
+      const r = await api('replay_request', { requestId: requestId, allowUnsafe: true }, current);
+      replayState = {
+        forId: requestId,
+        text: '<b>' + esc(r.status) + ' ' + esc(r.statusText) + '</b> · ' + esc(r.costTime) + 'ms · ' +
+          esc(r.responseSize) + ' 字节' +
+          (r.truncated ? '<span class="muted">（这里只显示前 8KB，完整内容看列表里新出现的那条）</span>' : ''),
+        body: r.body,
+      };
+      loadNetwork();
+    } catch (e) {
+      replayState = { forId: requestId, text: '<span class="lv-error">' + esc(e.message) + '</span>', body: null };
+    }
+    if (openDetailId === requestId) {
+      detailHtml = detailBody();
+      paintDetail();
+    }
   }
 
   function querySection(url) {
@@ -613,7 +679,7 @@ module.exports = function buildPanelHtml() {
     document.getElementById('shot-spin').textContent = '…';
     document.getElementById('shot-body').textContent = 'rendering…';
     try {
-      const r = await fetch('/api/tool', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const r = await fetch('/api/tool' + TQ, { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'screenshot', args: { format: 'png' }, sessionId: current }) });
       const result = await r.json();
       const img = result.content && result.content[0];
@@ -652,7 +718,7 @@ module.exports = function buildPanelHtml() {
   // poller stands down completely (idle = zero traffic)
   let sseHealthy = false;
   try {
-    const es = new EventSource('/api/events');
+    const es = new EventSource('/api/events' + TQ);
     es.onopen = () => { sseHealthy = true; };
     es.onerror = () => { sseHealthy = false; }; // EventSource retries on its own
     es.onmessage = (ev) => {
@@ -677,7 +743,7 @@ module.exports = function buildPanelHtml() {
     if (current) { loadLogs(); }
   }, 1000);
   document.getElementById('mcp-conf').textContent = JSON.stringify({
-    mcpServers: { vconsole: { type: 'http', url: 'http://' + location.host + '/mcp' } },
+    mcpServers: { vconsole: { type: 'http', url: 'http://' + location.host + '/mcp' + TQ } },
   }, null, 2);
   renderSessions();
 </script>

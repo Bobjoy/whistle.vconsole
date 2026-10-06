@@ -12,7 +12,7 @@ import { serveVendoredAsset } from './staticAssets.js';
 import type {
   HelloMsg, LogsMsg, NetworkMsg, ProbeMessage, CmdResultMsg, CmdType, ApiMsg,
 } from '@bobjoy/vconsole-protocol';
-import { MCP_PROXY_SESSION_ID } from '@bobjoy/vconsole-protocol';
+import { MCP_PROXY_SESSION_ID, PROTOCOL_VERSION } from '@bobjoy/vconsole-protocol';
 import { Session } from './session.js';
 export { Session } from './session.js';
 import { handleTool } from './tools.js';
@@ -21,12 +21,36 @@ import type { ToolApiName } from '@bobjoy/vconsole-protocol';
 export interface HubConfig {
   host: string;
   port: number;
+  /** required from non-loopback peers; loopback is the developer's own machine */
+  token?: string;
   logBufferMax: number;
   networkBufferMax: number;
   sessionTtlMs: number;
   onSessionEvent?: (event: string, sessionId: string) => void;
   /** fired after new probe data was buffered (panel SSE feed) */
   onData?: (sessionId: string, kind: 'logs' | 'network') => void;
+}
+
+/**
+ * A loopback peer is the developer's own machine: the MCP client on 127.0.0.1,
+ * the panel reached through whistle, a sibling process attaching as a proxy.
+ * They need no token. Everything arriving on a LAN interface does, because the
+ * probe bundle and this protocol are published on npm — the address and the
+ * message shape are public knowledge now, so bare reachability must not be
+ * enough to attach a session or to drive one.
+ */
+export function isLoopback(addr?: string): boolean {
+  return !addr || addr === '::1' || addr.startsWith('127.') || addr.toLowerCase() === '::ffff:127.0.0.1';
+}
+
+/** The single access rule both entry points share: loopback, or a matching `?t=`. */
+export function hasAccess(rawUrl: string, remoteAddress: string | undefined, token?: string): boolean {
+  if (isLoopback(remoteAddress)) { return true; }
+  try {
+    return new URL(rawUrl, 'http://localhost').searchParams.get('t') === token;
+  } catch {
+    return false;
+  }
 }
 
 interface PendingCommand {
@@ -96,6 +120,13 @@ export class Hub {
 
   private handleConnection(ws: WebSocket, req: IncomingMessage) {
     const url = new URL(req.url || '/', 'http://localhost');
+    if (!hasAccess(req.url || '/', req.socket.remoteAddress, this.config.token)) {
+      // no session is created: a stranger on the LAN (or a web page that
+      // guesses private addresses) cannot attach a probe or be listened to
+      this.stderr(`[ws] refused connection from ${req.socket.remoteAddress}: bad or missing ?t= token`);
+      ws.close(4001, 'bad token');
+      return;
+    }
     let session: Session | null = null;
     let sessionId = url.searchParams.get('sid');
     let isProxy = false;
@@ -135,7 +166,9 @@ export class Hub {
           this.activeSessionId = session.id;
         }
         this.config.onSessionEvent?.('connected', session.id);
-        this.stderr(`[ws] session ${session.id} connected: ${session.deviceLabel || ''} ${msg.page?.url || 'unknown url'}`.trim());
+        this.stderr(`[ws] session ${session.id} connected: ${session.deviceLabel || ''} ${msg.page?.url || 'unknown url'}`.trim()
+          + (session.protocolMismatch !== undefined
+            ? ` (protocol mismatch: probe=${session.protocolMismatch} hub=${PROTOCOL_VERSION})` : ''));
         return;
       }
 

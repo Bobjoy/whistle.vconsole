@@ -39,6 +39,10 @@
     "node": ">=18"
   },
   "author": "bobjoy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bobjoy/whistle.vconsole.git"
+  },
   "license_note": "Probe code is a fork of Tencent vConsole (MIT).",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",

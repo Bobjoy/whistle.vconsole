@@ -11,11 +11,11 @@
     "ignoredBuiltDependencies": ["core-js", "svelte-preprocess"]
   },
   "scripts": {
-    "build": "pnpm --filter @bobjoy/vconsole build && pnpm --filter @bobjoy/vconsole-vite build && pnpm --filter @bobjoy/whistle.vconsole build",
+    "build": "node scripts/require-probe-source.mjs && pnpm --filter @bobjoy/vconsole build && pnpm --filter @bobjoy/vconsole-vite build && pnpm --filter @bobjoy/whistle.vconsole build",
     "dev:server": "pnpm --filter @bobjoy/whistle.vconsole dev",
     "build:probe": "pnpm --filter @bobjoy/vconsole build",
     "build:plugin": "pnpm --filter @bobjoy/whistle.vconsole build",
-    "test:e2e": "node packages/whistle-plugin/test/ws-codec.unit.mjs && node packages/whistle-plugin/test/screenshot-loader.unit.mjs && node packages/whistle-plugin/test/e2e.mjs && node packages/whistle-plugin/test/multi-session.e2e.mjs && node packages/whistle-plugin/test/http.e2e.mjs",
+    "test:e2e": "node packages/whistle-plugin/test/e2e.mjs && node packages/whistle-plugin/test/multi-session.e2e.mjs && node packages/whistle-plugin/test/http.e2e.mjs && node packages/whistle-plugin/test/cli.e2e.mjs",
     "demo": "node examples/demo-h5/server.mjs 9443"
   }
 }

@@ -4,6 +4,13 @@
  *
  * Transport: JSON text frames over a single WebSocket connection.
  * The probe is the connecting side; the server listens.
+ *
+ * This file exists twice, on purpose: the node side keeps it at
+ * packages/protocol/src/protocol.ts, the probe side at
+ * src/mcp/protocol.ts. Nothing checks them against each other, so
+ * changing the protocol means editing BOTH in the same round (ADR-0007).
+ * PROTOCOL_VERSION is the only handshake between the two copies, and a hub
+ * that sees a different number warns instead of disconnecting (ADR-0008).
  */
 
 export const PROTOCOL_VERSION = 1;
@@ -69,6 +76,8 @@ export interface NetworkItem {
   transferSize?: number;
   /** websocket frames (websocket requestType only) */
   messages?: NetworkWsMessage[];
+  /** id of the request this one was replayed from (see `replay_request`) */
+  replayedFrom?: string;
 }
 
 export interface PageInfo {
@@ -137,6 +146,21 @@ export interface EvalResult {
   durationMs: number;
 }
 
+export interface ReplayResult {
+  /** status of THIS replay; the recorded request's own status is irrelevant here */
+  status: number;
+  statusText: string;
+  responseHeader?: SerializedValue;
+  /** response body, capped by the probe */
+  body: string;
+  truncated: boolean;
+  /** full body length in bytes, before the cap */
+  responseSize: number;
+  costTime: number;
+  /** id of the new network item this replay was recorded as */
+  replayedId: string;
+}
+
 // ---------------------------------------------------------------------------
 // Probe -> Server
 // ---------------------------------------------------------------------------
@@ -198,7 +222,7 @@ export interface PongMsg {
 export type ToolApiName =
   | 'list_sessions' | 'select_session' | 'get_logs' | 'wait_for'
   | 'get_network' | 'ws_frames' | 'eval_js' | 'get_dom' | 'get_storage' | 'set_storage'
-  | 'del_storage' | 'get_page_info' | 'screenshot';
+  | 'del_storage' | 'get_page_info' | 'screenshot' | 'replay_request';
 
 export interface ApiMsg {
   type: 'api';
@@ -224,7 +248,7 @@ export type ProbeMessage =
 // Server -> Probe
 // ---------------------------------------------------------------------------
 
-export type CmdType = 'eval' | 'get_dom' | 'get_storage' | 'set_storage' | 'del_storage' | 'page_info' | 'screenshot';
+export type CmdType = 'eval' | 'get_dom' | 'get_storage' | 'set_storage' | 'del_storage' | 'page_info' | 'screenshot' | 'replay';
 
 export interface CmdMsg {
   type: 'cmd';
@@ -254,7 +278,7 @@ export type ServerMessage = CmdMsg | PingMsg | KickMsg;
 // ---------------------------------------------------------------------------
 
 export interface VConsoleMcpOptions {
-  /** WebSocket endpoint of the MCP server, e.g. ws://192.168.1.10:9528 */
+  /** WebSocket endpoint of the MCP server, e.g. ws://192.168.x.x:9528 */
   serverUrl: string;
   /** optional human-readable label, e.g. "iPhone 15 测试机" */
   deviceName?: string;
