@@ -17,7 +17,7 @@
     https 页面只能连 wss://（ws:// 会被当作混合内容直接拦掉），所以公网接入
     要么前置一层 TLS 隧道，要么把页面退回 http 在局域网里跑。
   -->
-  <script src="https://unpkg.com/@bobjoy/vconsole@3.16.3/dist/vconsole.min.js"
+  <script src="https://unpkg.com/@bobjoy/vconsole@3.16.4/dist/vconsole.min.js"
           onerror="document.getElementById('hint').textContent='取不到 CDN 上的探针：检查外网可达，或把版本号换成当前已发布的 @bobjoy/vconsole'"></script>
   <script>
     var qs = new URLSearchParams(location.search);

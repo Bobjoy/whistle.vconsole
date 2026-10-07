@@ -114,7 +114,7 @@ new VConsole({
 **公网 CDN 外链（页面已发布到公网时）**：探针是单文件 UMD、全局 `VConsole`、依赖已全部打进 bundle，外联可直接用，不需要装包也不需要构建（`@bobjoy/vconsole` 已发到 npm，下面的 unpkg 地址就是现成的）：
 
 ```html
-<script src="https://unpkg.com/@bobjoy/vconsole@3.16.3/dist/vconsole.min.js"></script>
+<script src="https://unpkg.com/@bobjoy/vconsole@3.16.4/dist/vconsole.min.js"></script>
 <script>
   new VConsole({ serverUrl: 'wss://<你的隧道域名>/?t=<token>' });
 </script>

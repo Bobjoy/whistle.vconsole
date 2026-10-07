@@ -1,6 +1,6 @@
 {
   "name": "@bobjoy/whistle.vconsole",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "whistle vconsole 插件：随 w2 启动探针 hub + MCP server + 设备面板，并自动给被代理的 H5 页面注入 @bobjoy/vconsole 探针（页面零改动）。MCP server 源码在本包 src/ 下，dist/*.cjs 为构建产物。",
   "main": "index.js",
   "bin": {
