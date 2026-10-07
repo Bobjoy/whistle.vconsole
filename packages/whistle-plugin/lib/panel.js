@@ -241,7 +241,7 @@ module.exports = function buildPanelHtml() {
       <div id="vue-detail">
         <div class="toolbar"><b style="font-size:12px" id="vue-detail-title"></b><button class="cpy" onclick="copyVueState(this)">复制</button><button onclick="toggleVueEdit()">编辑</button><button onclick="closeVueDetail()">关闭</button></div>
         <div id="vue-edit">
-          <input id="vue-edit-path" placeholder="写入路径：data.appTitle 或 setup.form.name（区段只能是 data/setup）">
+          <input id="vue-edit-path" placeholder="写入路径：data.x / setup.x / vuex.x / pinia.storeId.x（props/computed 不可写）">
           <textarea id="vue-edit-value" placeholder='JSON 值，如 "新标题" / 42 / {"a":1}；非 JSON 按纯文本写入'></textarea>
           <div class="toolbar"><button onclick="writeVueState()">写入</button><button onclick="toggleVueEdit()">取消</button><span class="muted" style="font-size:12px" id="vue-edit-msg"></span></div>
         </div>
@@ -1274,22 +1274,44 @@ module.exports = function buildPanelHtml() {
     }
     if (op === 'set') {
       // state writeback, devtools-style: dot path relative to a state section
-      // (data.items.0.done / setup.form.name). props/computed are rejected —
-      // they flow from parents or derivations, writing them is a lie.
+      // (data.items.0.done / setup.form.name / vuex.calls / pinia.env.envName).
+      // props/computed are rejected — they flow from parents or derivations.
+      // vuex writes store.state directly (bypasses the mutation log) and
+      // pinia takes storeId as the first path segment.
       var entry3 = (W.__vcVueApps || [])[arg.app];
       if (!entry3) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
       var inst3 = entry3.v === 3
         ? (arg.path ? E.resolveInst(entry3.app, arg.path) : E.rootInst(entry3.app, entry3.container))
         : E.resolve2(entry3.vm, arg.path || '');
       if (!inst3) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
-      if (arg.section !== 'data' && arg.section !== 'setup') {
-        return JSON.stringify({ error: '只能写 data 或 setup（props/computed 不可写）' });
+      var sec = arg.section;
+      var keyPath = String(arg.key || '');
+      var target = null;
+      if (sec === 'data' || sec === 'setup') {
+        target = entry3.v === 3
+          ? (sec === 'data' ? inst3.data : inst3.setupState)
+          : (sec === 'data' ? (inst3._data || inst3.$data) : inst3._setupState);
+        if (!target) { return JSON.stringify({ error: '该组件没有 ' + sec + ' 状态' }); }
+      } else if (sec === 'vuex') {
+        var vstore = entry3.v === 3 ? (inst3.proxy && inst3.proxy.$store) : inst3.$store;
+        if (!vstore || !vstore.state) { return JSON.stringify({ error: '该组件没有 Vuex store' }); }
+        target = vstore.state;
+      } else if (sec === 'pinia') {
+        if (entry3.v !== 3) { return JSON.stringify({ error: 'Pinia 回写仅支持 Vue 3' }); }
+        var gp = inst3.appContext && inst3.appContext.config && inst3.appContext.config.globalProperties;
+        var pinia = gp && gp.$pinia;
+        if (!pinia || !pinia._s || !pinia._s.size) { return JSON.stringify({ error: '未检测到 Pinia' }); }
+        var segsP = keyPath.split('.');
+        var pstore = null;
+        pinia._s.forEach(function (st, id) { if (id === segsP[0]) { pstore = st; } });
+        if (!pstore) { return JSON.stringify({ error: 'Pinia store 不存在: ' + segsP[0] }); }
+        target = pstore.$state;
+        keyPath = segsP.slice(1).join('.');
+        if (!keyPath) { return JSON.stringify({ error: 'pinia 路径需要 store id 后的状态路径，如 pinia.env.envName' }); }
+      } else {
+        return JSON.stringify({ error: '只能写 data/setup/vuex/pinia（props/computed 不可写）' });
       }
-      var target = entry3.v === 3
-        ? (arg.section === 'data' ? inst3.data : inst3.setupState)
-        : (arg.section === 'data' ? (inst3._data || inst3.$data) : inst3._setupState);
-      if (!target) { return JSON.stringify({ error: '该组件没有 ' + arg.section + ' 状态' }); }
-      var segs2 = String(arg.key || '').split('.');
+      var segs2 = keyPath.split('.');
       var cur = target;
       for (var si = 0; si < segs2.length - 1; si++) {
         try { cur = cur[segs2[si]]; } catch (e) { return JSON.stringify({ error: '路径不可读: ' + segs2[si] }); }
@@ -1452,7 +1474,14 @@ module.exports = function buildPanelHtml() {
     if (dot < 0) { msg.textContent = '路径需要带区段前缀，如 data.appTitle'; return; }
     const section = pathStr.slice(0, dot);
     const key = pathStr.slice(dot + 1);
-    if (section !== 'data' && section !== 'setup') { msg.textContent = '区段只能是 data 或 setup'; return; }
+    if (['data', 'setup', 'vuex', 'pinia'].indexOf(section) < 0) {
+      msg.textContent = '区段只能是 data / setup / vuex / pinia（props/computed 不可写）';
+      return;
+    }
+    if (section === 'pinia' && key.indexOf('.') < 0) {
+      msg.textContent = 'pinia 路径需要 store id，如 pinia.env.envName';
+      return;
+    }
     let value;
     try { value = JSON.parse(rawVal); } catch (e) { value = rawVal; }
     msg.textContent = '写入中…';

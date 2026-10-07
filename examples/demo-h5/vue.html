@@ -17,6 +17,8 @@
   <p><a href="/">← 返回 vanilla demo</a></p>
 
   <script src="/vue.global.js"></script>
+  <script src="/vue-demi.iife.js"></script>
+  <script src="/pinia.iife.prod.js"></script>
   <script src="/vuex4.global.prod.js"></script>
   <script src="/vconsole.min.js"></script>
   <script>
@@ -49,11 +51,16 @@
         var doneCount = Vue.computed(function () {
           return items.value.filter(function (it) { return it.done; }).length;
         });
-        return { items: items, addOne: addOne, doneCount: doneCount };
+        var env = useEnv();
+        var renameEnv = function () {
+          env.envName = '预发环境-' + (Date.now() % 1000);
+        };
+        return { items: items, addOne: addOne, doneCount: doneCount, env: env, renameEnv: renameEnv };
       },
       template:
         '<div><h3>{{ title }}</h3><ul><todo-item v-for="(it, i) in items" :key="i" :item="it"></todo-item></ul>' +
-        '<p>已完成 {{ doneCount }} 项 · <button @click="$store.commit(\'bump\')">{{ $store.getters.label }}</button></p></div>',
+        '<p>已完成 {{ doneCount }} 项 · <button @click="$store.commit(\'bump\')">{{ $store.getters.label }}</button></p>' +
+        '<p>env: {{ env.envName }} / {{ env.region }} <button @click="renameEnv">改环境名</button></p></div>',
     };
 
     var store = Vuex.createStore({
@@ -72,6 +79,12 @@
       },
     });
 
+    var useEnv = Pinia.defineStore('env', {
+      state: function () {
+        return { envName: '测试环境', region: 'cn-east' };
+      },
+    });
+
     Vue.createApp({
       name: 'VueDemoApp',
       components: { 'todo-list': todoList },
@@ -81,7 +94,7 @@
       template:
         '<div><h1>{{ appTitle }}</h1><p>页面加载于 {{ loadTime }}</p>' +
         '<todo-list title="今日待办" :initial="[{ title: \'接入手探针\', done: true }, { title: \'看组件状态\', done: false }]"></todo-list></div>',
-    }).use(store).mount('#app');
+    }).use(store).use(Pinia.createPinia()).mount('#app');
   </script>
 </body>
 </html>
