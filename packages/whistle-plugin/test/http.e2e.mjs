@@ -289,12 +289,13 @@ async function main() {
     panelHtml.indexOf('data-t="element"') > -1 && panelHtml.indexOf('function elementSnippet') > -1
     && panelHtml.indexOf('__vcElem') > -1 && panelHtml.indexOf("api('eval_js'") > -1
     && panelHtml.indexOf("op === 'hslice'") > -1);
-  // vue tab walks __vue_app__ (prod-safe; the devtools hook is dev-only) and
-  // reuses the same pagination/chunking transport contract
-  check('panel: vue tab wired (__vue_app__ walker + chunked state)',
+  // vue tab walks __vue_app__ (v3, tree needs dev builds) and __vue__ (v2,
+  // instance-exposed even in prod builds), reusing the same pagination contract
+  check('panel: vue tab wired (v2+v3 walkers + chunked state)',
     panelHtml.indexOf('data-t="vue"') > -1 && panelHtml.indexOf('function vueSnippet') > -1
     && panelHtml.indexOf('__vue_app__') > -1 && panelHtml.indexOf('__vcVue') > -1
-    && panelHtml.indexOf("op === 'sslice'") > -1);
+    && panelHtml.indexOf("op === 'sslice'") > -1 && panelHtml.indexOf('stateOf2') > -1
+    && panelHtml.indexOf('__vue__._isVue') > -1);
   // the panel html is a build-time template literal: a `\` in it is eaten before
   // the browser sees the script, so a substring match can pass on broken code.
   // Parse the emitted script instead — that is the only check that catches it.

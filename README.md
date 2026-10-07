@@ -258,7 +258,7 @@ pnpm demo           # 启动演示页 http://localhost:9443
 - [x] v2.2：`mcp-server` 并入 whistle 插件包（`src/*.ts` → `dist/*.cjs`），stdio 回退用同一个包的 `bin`（v0.3.0 起这个命令叫 `v2`），仓库只剩三个包
 - [x] v2.2+（进行中）：协议先收敛为 `packages/protocol` 单一来源，量完跨仓库代价后翻案成两侧各一份内联副本（ADR-0007/0008）；`ws_frames` 增量查看 WS 帧（帧级环形缓冲，二进制由探针预编码 base64）；html2canvas vendor 进插件、探针优先从 hub 端口加载（纯内网可截图）
 - [x] v2.2+（发布清账）：私有协议包彻底**不作依赖**（webpack `resolve.alias` + tsconfig `paths` 构建期内联，pnpm 不再把它改写成装不出的范围）；`@bobjoy/vconsole-vite` 补 LICENSE + README；仓库根补 LICENSE；删掉插件里指向 Tencent/vConsole 的假 `repository`
- - [x] v2.2+（Vue 面板）：远程抽屉新增 Vue 标签——eval_js 驱动的 Vue 3 组件树 + props/setup/data 状态查看与复制；应用探测走 `__vue_app__`（生产构建无条件赋值，已对 3.5.13 官方产物核实）；组件树与状态**只在开发构建页面可读**（Vue 仅在开发运行时暴露实例：`app._instance`/`el.__vueParentComponent`，生产页给出明确提示），v1 只读、Vue 2 提示不支持
+ - [x] v2.2+（Vue 面板）：远程抽屉新增 Vue 标签——eval_js 驱动的组件树 + 状态查看与复制，**Vue 2 / Vue 3 双支持**：Vue 3 走 `__vue_app__`（组件树仅开发构建页面可读，生产页明确提示），Vue 2 走 `__vue__`（生产构建也暴露实例，线上线下都能看）；组合式与选项式状态都读（ref 解包、逐键 try/catch + 预算），根节点带 v2/v3 徽标；demo 加 `vue.html`（Vue 3 dev 构建）与 `vue2.html`（Vue 2.7 生产构建）
  - [x] v2.2+（Element 面板）：远程抽屉新增 Element 标签——eval_js 驱动的懒展开 DOM 树（序列化在页面上实时执行，单响应 ≤1800 字符自动分页）+ outerHTML 详情与复制，零协议变更、对全部已发布探针立即可用；正式协议命令化待需求验证后评估
  - [x] v2.2+（请求重放）：`replay_request` 把 Network 里抓到的请求在**页面内**原样再发一次（走同源 cookie/签名/代理规则），响应新状态、8KB 截断、新记录带 `replayedFrom`；非幂等方法由显式 `allowUnsafe` 把关，面板详情区同一颗按钮先弹确认；不可重放的（图片/script 等资源类请求、`[object Blob]` 占位请求体）直接拒绝而不是降级。见 `docs/adr/0003-page-side-replay.md`、`docs/specs/2026-10-05-network-replay.md`
 - [x] v2.2+（standalone）：HTTP 面上移成 `src/httpService.ts`，插件与 `v2 start` 共用一份实现；全局命令收成 `v2`（`start`/`-f`/`stop`/`status`/`logs`，裸跑仍是 stdio MCP），与 whistle 插件同端口共存、`status` 报版本漂移。见 `docs/adr/0005-standalone-v2-start.md`

@@ -990,30 +990,56 @@ module.exports = function buildPanelHtml() {
         findApps: function () {
           var out = [];
           var seen = [];
-          function push(app, el) {
-            for (var j = 0; j < seen.length; j++) { if (seen[j] === app) { return; } }
-            seen.push(app);
-            out.push({ app: app, container: el });
+          function push(entry) {
+            var key = entry.v === 3 ? entry.app : entry.vm;
+            for (var j = 0; j < seen.length; j++) { if (seen[j] === key) { return; } }
+            seen.push(key);
+            out.push(entry);
           }
           var els = document.querySelectorAll('[data-v-app], #app');
           for (var i = 0; i < els.length; i++) {
-            if (els[i].__vue_app__ && els[i].__vue_app__._instance) { push(els[i].__vue_app__, els[i]); }
+            if (els[i].__vue_app__ && els[i].__vue_app__._instance) { push({ v: 3, app: els[i].__vue_app__, container: els[i] }); }
           }
-          if (!out.length) {
-            var all = document.body ? document.body.getElementsByTagName('*') : [];
-            var cap = Math.min(all.length, 400);
-            for (var k = 0; k < cap; k++) {
-              if (all[k].__vue_app__ && all[k].__vue_app__._instance) { push(all[k].__vue_app__, all[k]); }
-            }
+          // Vue 2 sets el.__vue__ on the mount container unconditionally, even
+          // in production builds (_isVue guards against same-name accidents).
+          // _update re-stamps it on EVERY component's $el, so only instances
+          // without $parent are real app roots.
+          var all = document.body ? document.body.getElementsByTagName('*') : [];
+          var cap = Math.min(all.length, 400);
+          for (var k = 0; k < cap; k++) {
+            if (all[k].__vue_app__ && all[k].__vue_app__._instance) { push({ v: 3, app: all[k].__vue_app__, container: all[k] }); }
+            if (all[k].__vue__ && all[k].__vue__._isVue && !all[k].__vue__.$parent) { push({ v: 2, vm: all[k].__vue__, container: all[k] }); }
           }
           return out;
         },
-        vue2count: function () {
-          var n = 0;
-          var all = document.body ? document.body.getElementsByTagName('*') : [];
-          var cap = Math.min(all.length, 400);
-          for (var i = 0; i < cap; i++) { if (all[i].__vue__) { n++; } }
-          return n;
+        name2: function (vm) {
+          var o = vm && vm.$options;
+          return (o && (o.name || o._componentTag)) || 'Anonymous';
+        },
+        tagOf2: function (vm) {
+          try {
+            return vm.$el && vm.$el.nodeType === 1 ? vm.$el.tagName.toLowerCase() : '';
+          } catch (e) { return ''; }
+        },
+        resolve2: function (vm, path) {
+          var inst = vm;
+          if (path) {
+            var segs = path.split('.');
+            for (var i = 0; i < segs.length; i++) {
+              inst = inst.$children[Number(segs[i])];
+              if (!inst) { return null; }
+            }
+          }
+          return inst;
+        },
+        grabObj: function (obj) {
+          if (!obj || typeof obj !== 'object') { return null; }
+          var o = {};
+          var ks = Object.keys(obj);
+          for (var i = 0; i < Math.min(ks.length, 30); i++) {
+            try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], 2); } catch (e) { o[ks[i]] = '[unreadable]'; }
+          }
+          return o;
         },
         rootInst: function (app, el) {
           // prod builds never assign app._instance (verified on 3.5.13: only
@@ -1070,16 +1096,11 @@ module.exports = function buildPanelHtml() {
           return String(v).slice(0, 60);
         },
         stateOf: function (inst) {
-          function grab(obj) {
-            if (!obj || typeof obj !== 'object') { return null; }
-            var o = {};
-            var ks = Object.keys(obj);
-            for (var i = 0; i < Math.min(ks.length, 30); i++) {
-              try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], 2); } catch (e) { o[ks[i]] = '[unreadable]'; }
-            }
-            return o;
-          }
-          return { props: grab(inst.props), setup: grab(inst.setupState), data: grab(inst.data) };
+          return { props: E.grabObj(inst.props), setup: E.grabObj(inst.setupState), data: E.grabObj(inst.data) };
+        },
+        // Vue 2.7's composition API keeps setup state on _setupState when present
+        stateOf2: function (vm) {
+          return { props: E.grabObj(vm.$props), data: E.grabObj(vm._data), setup: E.grabObj(vm._setupState) };
         },
       };
     }
@@ -1089,34 +1110,49 @@ module.exports = function buildPanelHtml() {
       var apps = [];
       for (var i = 0; i < found.length; i++) {
         var f = found[i];
-        var root = E.rootInst(f.app, f.container);
+        var name = '?';
+        var tag = '';
+        var readable = true;
+        if (f.v === 3) {
+          var root = E.rootInst(f.app, f.container);
+          name = root ? E.name(root) : '(unknown)';
+          tag = root ? E.tagOf(root) : '';
+          readable = !!root;
+        } else {
+          name = E.name2(f.vm);
+          tag = E.tagOf2(f.vm);
+        }
         apps.push({
-          i: i,
-          name: root ? E.name(root) : (f.app._instance ? E.name(f.app._instance) : '(unknown)'),
-          tag: root ? E.tagOf(root) : '',
+          i: apps.length,
+          v: f.v,
+          name: name,
+          tag: tag,
           container: (f.container.tagName || '').toLowerCase() + (f.container.id ? '#' + f.container.id : ''),
-          readable: !!root,
+          readable: readable,
         });
       }
-      W.__vcVueApps = found.map(function (x) { return x.app; });
-      return JSON.stringify({ apps: apps, vue2: found.length === 0 ? E.vue2count() : 0 });
+      W.__vcVueApps = found;
+      return JSON.stringify({ apps: apps });
     }
     if (op === 'tree') {
-      var list = W.__vcVueApps || [];
-      var app = list[arg.app];
-      if (!app) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
-      var inst = E.rootInst(app, app._container);
-      if (arg.path) {
-        inst = E.resolveInst(app, arg.path || '');
-      }
+      var entry = (W.__vcVueApps || [])[arg.app];
+      if (!entry) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+      var inst = entry.v === 3
+        ? (arg.path ? E.resolveInst(entry.app, arg.path) : E.rootInst(entry.app, entry.container))
+        : E.resolve2(entry.vm, arg.path || '');
       if (!inst) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
-      var kids = E.kids(inst);
+      var kids = entry.v === 3 ? E.kids(inst) : inst.$children;
       var offset = arg.offset || 0;
       var end = Math.min(offset + Math.min(arg.limit || 12, 20), kids.length);
       var out = { total: kids.length, offset: offset, ch: [], next: null };
       var next = null;
       for (var j = offset; j < end; j++) {
-        out.ch.push({ n: E.name(kids[j]), tag: E.tagOf(kids[j]), cc: E.kids(kids[j]).length });
+        var c = kids[j];
+        out.ch.push({
+          n: entry.v === 3 ? E.name(c) : E.name2(c),
+          tag: entry.v === 3 ? E.tagOf(c) : E.tagOf2(c),
+          cc: entry.v === 3 ? E.kids(c).length : c.$children.length,
+        });
         if (JSON.stringify(out).length > 1800 && out.ch.length > 1) { out.ch.pop(); next = j; break; }
       }
       if (next === null && end < kids.length) { next = end; }
@@ -1124,18 +1160,22 @@ module.exports = function buildPanelHtml() {
       return JSON.stringify(out);
     }
     if (op === 'state') {
-      var list2 = W.__vcVueApps || [];
-      var app2 = list2[arg.app];
-      if (!app2) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
-      var inst2 = E.rootInst(app2, app2._container);
-      if (arg.path) {
-        inst2 = E.resolveInst(app2, arg.path || '');
-      }
+      var entry2 = (W.__vcVueApps || [])[arg.app];
+      if (!entry2) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+      var inst2 = entry2.v === 3
+        ? (arg.path ? E.resolveInst(entry2.app, arg.path) : E.rootInst(entry2.app, entry2.container))
+        : E.resolve2(entry2.vm, arg.path || '');
       if (!inst2) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
-      var text = JSON.stringify(E.stateOf(inst2));
+      var st = entry2.v === 3 ? E.stateOf(inst2) : E.stateOf2(inst2);
+      var text = JSON.stringify(st);
       var cut = text.length > 20000;
       W.__vcVueState = cut ? text.slice(0, 20000) : text;
-      return JSON.stringify({ name: E.name(inst2), len: W.__vcVueState.length, cut: cut, s0: W.__vcVueState.slice(0, 1800) });
+      return JSON.stringify({
+        name: entry2.v === 3 ? E.name(inst2) : E.name2(inst2),
+        len: W.__vcVueState.length,
+        cut: cut,
+        s0: W.__vcVueState.slice(0, 1800),
+      });
     }
     if (op === 'sslice') {
       return JSON.stringify({ s: String(W.__vcVueState || '').slice(arg.i, arg.i + 1800) });
@@ -1185,22 +1225,20 @@ module.exports = function buildPanelHtml() {
       if (!r.apps.length) {
         vueApps = null;
         renderVue();
-        document.getElementById('vue-body').innerHTML = r.vue2
-          ? '<span class="muted">检测到 Vue 2 应用，当前版本只支持 Vue 3</span>'
-          : '<span class="muted">未检测到 Vue 3 应用（按 __vue_app__ / [data-v-app] 探测）</span>';
+        document.getElementById('vue-body').innerHTML = '<span class="muted">未检测到 Vue 应用（Vue 3 按 __vue_app__ / [data-v-app] 探测，Vue 2 按 __vue__ 探测）</span>';
         return;
       }
       vueApps = r.apps;
       for (const a of r.apps) {
-        vueNodes[String(a.i)] = { p: String(a.i), n: a.name, tag: a.tag, cc: 0, loaded: false, expanded: true, children: [] };
-      }
-      if (!r.apps.some((a) => a.readable)) {
-        renderVue();
-        document.getElementById('vue-body').innerHTML = '<div class="muted" style="padding:8px">检测到 Vue 3 应用（生产构建）。组件树与状态需要开发构建的页面——Vue 只在开发运行时暴露组件实例（vite dev 页面或非 prod 的 Vue 包均可）。</div>';
-        return;
+        vueNodes[String(a.i)] = { p: String(a.i), n: a.name, tag: a.tag, v: a.v, cc: 0, loaded: false, expanded: true, children: [] };
       }
       for (const a of r.apps) {
         if (a.readable) { await fetchVueChildren(String(a.i)); }
+      }
+      if (!r.apps.some((a) => a.readable)) {
+        renderVue();
+        document.getElementById('vue-body').innerHTML = '<div class="muted" style="padding:8px">检测到 Vue 3 应用（生产构建）。组件树与状态需要开发构建的页面——Vue 3 只在开发运行时暴露组件实例（vite dev 页面或非 prod 的 Vue 包均可）。Vue 2 无此限制。</div>';
+        return;
       }
       renderVue();
     } catch (e) {
@@ -1212,9 +1250,10 @@ module.exports = function buildPanelHtml() {
   function vueRowHtml(n, depth) {
     const toggle = n.cc > 0 ? (n.expanded ? '▾' : '▸') : '·';
     const tag = n.tag ? '<span class="muted"> &lt;' + esc(n.tag) + '&gt;</span>' : '';
+    const badge = depth === 0 && n.v ? '<span class="muted"> v' + n.v + '</span>' : '';
     return '<div class="elem-row' + (vueSelected === n.p ? ' sel' : '') + '" data-p="' + esc(n.p) + '" style="padding-left:' + (6 + depth * 14) + 'px">' +
       '<span class="elem-tg" data-act="toggle">' + toggle + '</span>' +
-      '<span><span class="elem-tag">' + esc(n.n || 'Anonymous') + '</span>' + tag + '</span>' +
+      '<span><span class="elem-tag">' + esc(n.n || 'Anonymous') + '</span>' + badge + tag + '</span>' +
       (n.cc > 0 ? '<span class="muted"> (' + n.cc + ')</span>' : '') + '</div>';
   }
 

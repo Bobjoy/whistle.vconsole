@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>whistle-vconsole vue2 demo</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 0; padding: 16px; background: #f5f5f7; }
+    h1 { font-size: 20px; }
+    li { margin: 6px 0; }
+    button { padding: 10px 14px; font-size: 14px; border: none; border-radius: 8px; background: #35495e; color: #fff; margin-right: 8px; }
+    a { font-size: 13px; color: #4e5969; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <p><a href="/">← 返回 vanilla demo</a> · <a href="/vue.html">Vue 3 demo</a></p>
+
+  <script src="/vue2.global.min.js"></script>
+  <script src="/vconsole.min.js"></script>
+  <script>
+    var qs = new URLSearchParams(location.search);
+    new VConsole({
+      serverUrl: qs.get('ws') || 'ws://' + location.hostname + ':9528',
+    });
+
+    var TodoItem = {
+      name: 'TodoItem',
+      props: ['item'],
+      data: function () {
+        return { done: this.item.done };
+      },
+      template: '<li @click="done = !done">{{ item.title }} — {{ done ? "已完成" : "进行中" }}</li>',
+    };
+
+    var TodoList = {
+      name: 'TodoList',
+      components: { 'todo-item': TodoItem },
+      props: {
+        title: String,
+        initial: { type: Array, default: function () { return [{ title: '接入手探针', done: true }, { title: '看组件状态', done: false }]; } },
+      },
+      data: function () {
+        return { items: this.initial.slice() };
+      },
+      methods: {
+        addOne: function () {
+          this.items.push({ title: '任务 ' + (this.items.length + 1), done: false });
+          console.log('[vue2] added task', { count: this.items.length });
+        },
+      },
+      template:
+        '<div><h3>{{ title }}</h3><ul><todo-item v-for="(it, i) in items" :key="i" :item="it"></todo-item></ul>' +
+        '<button @click="addOne">加一个任务</button></div>',
+    };
+
+    new Vue({
+      name: 'Vue2DemoApp',
+      el: '#app',
+      data: { appTitle: 'Vue 2 调试演示页', loadTime: new Date().toLocaleTimeString() },
+      components: { 'todo-list': TodoList },
+      template:
+        '<div><h1>{{ appTitle }}</h1><p>页面加载于 {{ loadTime }}</p>' +
+        '<todo-list title="今日待办"></todo-list></div>',
+    });
+  </script>
+</body>
+</html>
