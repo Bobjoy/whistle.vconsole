@@ -45,12 +45,15 @@ async function main() {
   };
 
   // wait for the probe to be visible; several pages may be connected
-  // (e.g. the user's phone/WeChat) — target OUR browser session explicitly
+  // (e.g. the user's phone/WeChat) — target OUR browser session explicitly.
+  // The demo page's deviceName is UA-derived (it no longer hard-codes one),
+  // so match on the demo origin instead, with any online session as fallback.
   let session = null;
   for (let i = 0; i < 30; i++) {
     const r = await client.callTool({ name: 'list_sessions', arguments: {} });
     const sessions = JSON.parse(r.content[0].text).sessions;
-    const mine = sessions.find((s) => s.deviceName === 'demo-browser' && s.online);
+    const mine = sessions.find((s) => s.online && (s.url || '').indexOf(':9443') > -1)
+      || sessions.find((s) => s.online);
     if (mine) {
       session = mine;
       if (!mine.active) {
