@@ -53,7 +53,7 @@ const work = fs.mkdtempSync(path.join(os.tmpdir(), 'vcm-plugin-'));
 const packDir = path.join(work, 'package');
 fs.mkdirSync(packDir, { recursive: true });
 // devDependencies stay out of the manifest: nothing in there is needed at
-// runtime (the protocol source is inlined into dist/*.cjs at build time)
+// runtime (everything local, including src/protocol.ts, is inlined into dist/*.cjs)
 const { devDependencies, ...publishPkg } = pkg;
 fs.writeFileSync(path.join(packDir, 'package.json'), JSON.stringify({
   ...publishPkg,
@@ -68,14 +68,30 @@ for (const entry of ['index.js', 'rules.txt', 'lib', 'dist', 'vendor']) {
 execSync('npm install --omit=dev --no-audit --no-fund --loglevel=error', { cwd: packDir, stdio: 'inherit' });
 
 // Pack manually instead of `npm pack`: the package.json `files` allowlist makes
-// libnpmpack drop node_modules even when bundleDependencies is set. A plain tar
-// of the whole dir (npm pack uses the same `package/` layout) guarantees the
-// vendored node_modules ships.
+// libnpmpack drop node_modules even when bundleDependencies is set. The archive
+// holds files and symlinks only (same layout `npm pack` emits): npm publish
+// rejects directory entries with E415 "invalid path: package/", and extraction
+// recreates parent dirs on its own. Symlinks (node_modules/.bin) are kept.
 // The name keeps whistle's `whistle.` prefix so `w2 install` recognises it.
 const shortName = pkg.name.replace(/^@[^/]+\//, '');
 const outTgz = path.join(monorepo, `${shortName}-${pkg.version}.tgz`);
 fs.rmSync(outTgz, { force: true });
-execSync(`tar -czf ${JSON.stringify(outTgz)} -C ${JSON.stringify(work)} package`, { stdio: 'inherit' });
+const entries = [];
+(function walk(dir) {
+  const dirents = fs.readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const dirent of dirents) {
+    const entryPath = path.join(dir, dirent.name);
+    if (dirent.isDirectory()) walk(entryPath);
+    else entries.push(path.relative(work, entryPath));
+  }
+})(packDir);
+fs.writeFileSync(path.join(work, 'packlist.txt'), entries.join('\n') + '\n');
+execSync(`tar -czf ${JSON.stringify(outTgz)} -T packlist.txt`, {
+  cwd: work,
+  stdio: 'inherit',
+  env: { ...process.env, COPYFILE_DISABLE: '1' }, // bsdtar: keep AppleDouble files out
+});
 fs.rmSync(work, { recursive: true, force: true });
 
 console.log(`built: ${outTgz}`);
