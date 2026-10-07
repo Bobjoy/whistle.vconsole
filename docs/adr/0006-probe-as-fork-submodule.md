@@ -19,7 +19,7 @@
 - **fork 双分支**：`dev` 只做 upstream 镜像（只允许 fast-forward），我们的全部偏离（复测口径 13 改 + 6 增，清单见 spec US-2）落在 `mcp` 分支，submodule pin `mcp`。同步 upstream = fetch `dev` + rebase `mcp`，冲突永远只出现在 `mcp` 分支上，镜像分支保持干净。
 - **发版从 fork 做**：`@bobjoy/vconsole` 的 `package.json`、CHANGELOG、构建配置都属于 fork。
 - **探针侧单测跟着探针走**：`ws-codec.unit.mjs`（10 项）、`screenshot-loader.unit.mjs`（9 项）、`replay.unit.mjs`（21 项）搬进 fork，fork 自带工具链（esbuild 作 devDependency；三件是手写 `check()` 计数，**不是** `node:test` 文件，搬过去零改写，由一条 `npm test` 串起来）。本仓库的 `pnpm test:e2e` 从 233 项降到 193 项，只剩服务面的接缝。
-- **fork 不自带协议依赖**：`@bobjoy/vconsole-protocol` 不发包、也不跨仓库引用，协议在 fork 里是一份独立副本 `src/mcp/protocol.ts`（理由与护栏见 ADR-0007）。
+- **fork 不自带协议依赖**：协议不发包、也不跨仓库引用，在 fork 里是一份独立副本 `src/mcp/protocol.ts`（理由与护栏见 ADR-0007，含它 2026-10-07 的修订）。
 
 ## 后果
 

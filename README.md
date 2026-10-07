@@ -18,7 +18,7 @@ whistle vConsole 插件 + MCP server + H5 页面调试探针。面向 AI agent �
 | `@bobjoy/vconsole` | fork 版 vConsole 探针：面板数据全复用，新增 WebSocket bridge（日志/网络上报 + 命令执行）。**源码不在本仓库**：住在 fork 仓库 [`Bobjoy/vConsole`](https://github.com/Bobjoy/vConsole) 的 `mcp` 分支，本仓库以 git submodule 挂在 `packages/vconsole`；`dev` 分支是 upstream（`Tencent/vConsole`）的纯镜像，只用来同步修复 |
 | `@bobjoy/vconsole-vite` | Vite 插件：dev 模式零侵入自动注入探针 |
 
-两端共享的消息协议**两侧各一份副本、都不发包**：本仓库 `packages/protocol/src/protocol.ts`（`@bobjoy/vconsole-protocol`，`private: true`）供 Node 侧，fork 里 `src/mcp/protocol.ts` 供探针侧。副本不是任何包的依赖，而是由探针侧 webpack `resolve.alias` 与插件侧 tsconfig `paths` 直指源码，构建期内联进各自的单文件 bundle，发布物里不存在这个包（探针的 `dist/vconsole.min.d.ts` 会把它拼成同名 ambient module 块，消费者不需要装它）。代价是两份会漂，所以两条护栏：改协议必须同一轮动两处；`PROTOCOL_VERSION` 是唯一的握手号，两端不一致时 hub **只标记不断开**（面板与 `list_sessions` 可见）。
+两端共享的消息协议**两侧各一份副本、都不发包**：Node 侧是 `packages/whistle-plugin/src/protocol.ts`（插件包的普通源文件，构建时和其他模块一起打进 `dist/*.cjs`），探针侧是 fork 里 `src/mcp/protocol.ts` 供探针侧。副本不是任何包的依赖，而是由探针侧 webpack `resolve.alias` 与插件侧 tsconfig `paths` 直指源码，构建期内联进各自的单文件 bundle，发布物里不存在这个包（探针的 `dist/vconsole.min.d.ts` 会把它拼成同名 ambient module 块，消费者不需要装它）。代价是两份会漂，所以两条护栏：改协议必须同一轮动两处；`PROTOCOL_VERSION` 是唯一的握手号，两端不一致时 hub **只标记不断开**（面板与 `list_sessions` 可见）。
 
 ## 快速开始
 
@@ -256,7 +256,7 @@ pnpm demo           # 启动演示页 http://localhost:9443
 - [x] v2.0：MCP server 迁入 whistle 插件（随 `w2 start` 启动：hub + stateless HTTP `/mcp` + 面板 Drawer 调试，除 element 外全量工具）；ZCode 配置迁移到 http 接入
 - [x] v2.1：包名收敛为 `@bobjoy/whistle.vconsole` / `@bobjoy/vconsole` / `@bobjoy/vconsole-vite`，协议不再单独发包；插件规则自动注入探针（页面零改动）
 - [x] v2.2：`mcp-server` 并入 whistle 插件包（`src/*.ts` → `dist/*.cjs`），stdio 回退用同一个包的 `bin`（v0.3.0 起这个命令叫 `v2`），仓库只剩三个包
-- [x] v2.2+（进行中）：协议收敛为 `packages/protocol` 单一来源（不再人工双副本）；`ws_frames` 增量查看 WS 帧（帧级环形缓冲，二进制由探针预编码 base64）；html2canvas vendor 进插件、探针优先从 hub 端口加载（纯内网可截图）
+- [x] v2.2+（进行中）：协议先收敛为 `packages/protocol` 单一来源，量完跨仓库代价后翻案成两侧各一份内联副本（ADR-0007/0008）；`ws_frames` 增量查看 WS 帧（帧级环形缓冲，二进制由探针预编码 base64）；html2canvas vendor 进插件、探针优先从 hub 端口加载（纯内网可截图）
 - [x] v2.2+（发布清账）：私有协议包彻底**不作依赖**（webpack `resolve.alias` + tsconfig `paths` 构建期内联，pnpm 不再把它改写成装不出的范围）；`@bobjoy/vconsole-vite` 补 LICENSE + README；仓库根补 LICENSE；删掉插件里指向 Tencent/vConsole 的假 `repository`
 - [x] v2.2+（请求重放）：`replay_request` 把 Network 里抓到的请求在**页面内**原样再发一次（走同源 cookie/签名/代理规则），响应新状态、8KB 截断、新记录带 `replayedFrom`；非幂等方法由显式 `allowUnsafe` 把关，面板详情区同一颗按钮先弹确认；不可重放的（图片/script 等资源类请求、`[object Blob]` 占位请求体）直接拒绝而不是降级。见 `docs/adr/0003-page-side-replay.md`、`docs/specs/2026-10-05-network-replay.md`
 - [x] v2.2+（standalone）：HTTP 面上移成 `src/httpService.ts`，插件与 `v2 start` 共用一份实现；全局命令收成 `v2`（`start`/`-f`/`stop`/`status`/`logs`，裸跑仍是 stdio MCP），与 whistle 插件同端口共存、`status` 报版本漂移。见 `docs/adr/0005-standalone-v2-start.md`

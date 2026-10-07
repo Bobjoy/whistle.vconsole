@@ -19,14 +19,14 @@
 | 包 | 目录 | 负责 | 依赖 |
 |----|------|------|------|
 | **@bobjoy/vconsole** | `packages/vconsole`（**git submodule** → `Bobjoy/vConsole`） | 探针本体 + `src/mcp/*` 桥。fork 是探针的唯一源码地，发版从 fork 做 | 无跨仓库协议依赖（自带 `src/mcp/protocol.ts` 副本） |
-| **@bobjoy/vconsole-protocol** | `packages/protocol`（**不发布**） | 跨端消息协议（类型 + 运行时常量/纯函数）。构建期内联进各自 bundle，发布物里不存在。**两侧各一份副本**：本仓库这份管 Node 侧，fork 里 `src/mcp/protocol.ts` 那份管探针侧 |
+| **协议（两份副本）** | Node 侧 `packages/whistle-plugin/src/protocol.ts`；探针侧 fork 的 `src/mcp/protocol.ts` | 跨端消息协议（类型 + 运行时常量/纯函数）。构建期内联进各自 bundle，发布物里不存在；**不发包、也不跨仓库引用**，所以它不再有包名 |
 | **@bobjoy/whistle.vconsole** | `packages/whistle-plugin` | **一个包全部服务**：hub（WS 9528）+ HTTP 面 9527（面板、`/api/tool`、`/api/sessions`、`/api/events` SSE、`/probe.js`、`/inject.html`、`/mcp`）+ daemon（`v2 start/stop/status/logs`）+ 设备面板 UI + MCP 层（tools 定义与 McpServer 工厂）+ whistle 接入（`rules.txt` 注入、插件入口、菜单 redirect）。保持自包含 bundle（`bundleDependencies`），`w2 install <tgz> --offline` 仍能装 | 无跨仓库协议依赖（用 `packages/protocol` 那份内联）；构建期取 @bobjoy/vconsole 的 `dist/vconsole.min.js` |
 | **@bobjoy/vconsole-vite** | `packages/vite-plugin` | vite dev 期注入探针 | @bobjoy/vconsole |
 
 - **MCP 不另起进程**：`/mcp` 与 stdio 入口都在同一个进程里，保住「agent 配一条 http URL」和「裸跑 stdio 自带 hub」两条现有能力。
 - **面板归服务侧**：设备列表 + 调试抽屉跟服务在同一个包，插件路径和 standalone 路径共用同一份 UI，不允许各存一份。
 - **fork 分支线**：`Bobjoy/vConsole` 的 `dev` 只做 upstream（`Tencent/vConsole`）镜像（只 fast-forward），我们的改动在 `mcp` 分支；submodule pin `mcp`，同步 upstream = fetch dev + rebase `mcp`。
-- **协议双副本**：探针搬进独立仓库后，协议**不发包、也不跨仓库引用**，两侧各持一份、各自构建期内联（本仓库 `packages/protocol/src/protocol.ts` 供 Node 侧，fork `src/mcp/protocol.ts` 供探针侧）。代价是它会漂，因此两条护栏：改协议必须同一轮动两处；`PROTOCOL_VERSION` 是唯一握手号（见「协议版本兼容」）。
+- **协议双副本**：探针搬进独立仓库后，协议**不发包、也不跨仓库引用**，两侧各持一份、各自构建期内联（Node 侧 `packages/whistle-plugin/src/protocol.ts`，探针侧 fork `src/mcp/protocol.ts`）。代价是它会漂，因此两条护栏：改协议必须同一轮动两处；`PROTOCOL_VERSION` 是唯一握手号（见「协议版本兼容」）。
 
 ## 启动形态
 
@@ -59,7 +59,7 @@
 
 | 术语 | 定义 |
 |------|------|
-| **协议版本（PROTOCOL_VERSION）** | `@bobjoy/vconsole-protocol` 里唯一的整数握手号（当前 `1`），探针在 `connect` 消息里上报；发包后两端不再天然同版本 |
+| **协议版本（PROTOCOL_VERSION）** | 两份协议副本里那个唯一的整数握手号（当前 `1`），探针在 `connect` 消息里上报；两边不再同批发包，所以天然会不同版本 |
 | **软校验（mismatch 只警告）** | hub 发现探针上报的版本 ≠ 自己那份时**不断开**，只在该 session 上标 `protocolMismatch`，面板设备卡片与 `list_sessions` 都能看到。理由：公网旧探针（CDN 固定版本）连本机新 hub 是主用例，硬断开等于堵死它 |
 
 ## 请求重放（replay）

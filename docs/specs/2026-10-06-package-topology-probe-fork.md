@@ -15,8 +15,8 @@
 ```
 Bobjoy/vConsole (fork, 独立仓库)          whistle.vconsole (本仓库)
   dev   = upstream 镜像，只 fast-forward    packages/vconsole     → submodule，pin mcp 分支
-  mcp   = 我们的 9+5 改动 + 协议副本         packages/protocol     → 不发布，Node 侧那份协议
-     + 探针侧 3 个单测 + 修好的 .gitignore   packages/whistle-plugin → 一个包：hub+HTTP面+面板+MCP+bin v2+whistle 注入
+  mcp   = 我们的 9+5 改动 + 协议副本         packages/whistle-plugin → 一个包全部服务：hub+HTTP面+面板+MCP+bin v2+whistle 注入，
+     + 探针侧 3 个单测 + 修好的 .gitignore      Node 侧那份协议就是它的 src/protocol.ts（ADR-0007 修订）
                                            packages/vite-plugin   → 保留发包
 ```
 
@@ -48,7 +48,7 @@ Bobjoy/vConsole (fork, 独立仓库)          whistle.vconsole (本仓库)
 
 **C. 协议双副本与软校验**
 
-- US-14 `@bobjoy/vconsole-protocol` 保持 `private: true` 且不出现在任何包的 `dependencies` 里；发布链只有 3 个包（`@bobjoy/vconsole`、`@bobjoy/whistle.vconsole`、`@bobjoy/vconsole-vite`），互不阻塞。
+- US-14 协议不出现在任何包的 `dependencies` 里；发布链只有 3 个包（`@bobjoy/vconsole`、`@bobjoy/whistle.vconsole`、`@bobjoy/vconsole-vite`），互不阻塞。**修订（2026-10-07）**：原本靠"`@bobjoy/vconsole-protocol` 保持 `private: true`"达成，现在那个壳撤了——Node 侧那份折进 `packages/whistle-plugin/src/protocol.ts`，比"私有包"更直接地不可能被当成依赖（见 ADR-0007 修订）。
 - US-15 Node 侧机制不变：`packages/whistle-plugin/tsconfig.json` 的 `paths` 仍直指 `../protocol/src/protocol.ts`，构建期内联，发布物里不存在该包。
 - US-16 两份副本初始状态一致（同一份协议内容、同一个 `PROTOCOL_VERSION`）。
 - US-17 hub 读 `connect` 上报的 `protocol`：与自身 `PROTOCOL_VERSION` 一致时 session 上没有任何 mismatch 痕迹；不一致时**连接保持**，`list_sessions` 返回该 session 带 `protocolMismatch: <探针上报值>`。

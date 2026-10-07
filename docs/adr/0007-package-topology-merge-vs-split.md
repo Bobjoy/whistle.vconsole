@@ -22,7 +22,7 @@
 | 包 | 目录 | 装的东西 |
 |----|------|----------|
 | `@bobjoy/vconsole` | `packages/vconsole`（submodule → `Bobjoy/vConsole` 的 `mcp` 分支） | 探针 + `src/mcp/*` 桥 + **协议副本 `src/mcp/protocol.ts`** + 探针侧单测 |
-| （不发布）`@bobjoy/vconsole-protocol` | `packages/protocol` | 保持 `private: true`：Node 侧那份协议源，构建期内联，发布物里不存在 |
+| ~~（不发布）`@bobjoy/vconsole-protocol`~~ | `packages/protocol` | 保持 `private: true`：Node 侧那份协议源，构建期内联，发布物里不存在。**这个壳已在文末「修订（2026-10-07）」里撤掉**，Node 侧那份现在是 `packages/whistle-plugin/src/protocol.ts` |
 | `@bobjoy/whistle.vconsole` | `packages/whistle-plugin`（目录名不改） | hub(9528) + HTTP 面(9527：面板、`/api/*`、`/probe.js`、`/inject.html`、`/mcp`) + daemon(`v2`) + 面板 UI + MCP 层 + whistle 接入（`rules.txt`、插件入口、菜单 redirect） |
 | `@bobjoy/vconsole-vite` | `packages/vite-plugin` | 保留发包，继续依赖 `@bobjoy/vconsole` |
 
@@ -33,9 +33,9 @@
 
 ## 后果
 
-- **协议改动必须同一轮动两处**（本仓库 `packages/protocol/src/protocol.ts` 与 fork 的 `src/mcp/protocol.ts`）——这是这次决定主动接下的税，它翻案了 v2.1 的"协议单一来源"收敛。接下的理由：两条替代方案各自换来的东西（多一条发包链 + 一个 pnpm 旋钮，或两边都无法独立构建）都比"改协议时多改一个文件"更贵。
+- **协议改动必须同一轮动两处**（Node 侧那份与探针侧 fork 的 `src/mcp/protocol.ts`；Node 侧的位置见文末修订）——这是这次决定主动接下的税，它翻案了 v2.1 的"协议单一来源"收敛。接下的理由：两条替代方案各自换来的东西（多一条发包链 + 一个 pnpm 旋钮，或两边都无法独立构建）都比"改协议时多改一个文件"更贵。
 - 可见漂移的出口是 `PROTOCOL_VERSION` 握手（ADR-0008），不是构建期报错。
-- 两侧构建配置几乎不动：探针侧继续用自己的副本，Node 侧继续 tsconfig `paths` 直指 `packages/protocol`。不新增 `.npmrc` 开关，也不新增构建前拷贝脚本。
+- 两侧构建配置几乎不动：探针侧继续用自己的副本，Node 侧继续由 tsconfig `paths` 直指那份源文件（当时指 `packages/protocol`，文末修订后它就是包内文件，`paths` 已删）。不新增 `.npmrc` 开关，也不新增构建前拷贝脚本。
 - 发布链只有三个包且互不阻塞：`@bobjoy/vconsole`（在 fork 发）→ `@bobjoy/whistle.vconsole` → `@bobjoy/vconsole-vite`。
 - 本机默认 registry 是 `registry.npmmirror.com`（镜像有同步延迟），装自己刚发布的版本必须显式 `--registry=https://registry.npmjs.org/`。
 - 仓库公开前要把内容扫干净：`192.168.1.10` 字面量（`packages/protocol/src/protocol.ts:274`、`packages/vite-plugin/README.md:27` 等，fork 那份副本同理）、未入库却被 README 引用的 `.zcode/config.json`（内含绝对路径与用户名）。
@@ -47,3 +47,13 @@
 - **MCP 作为 cli 的进程客户端（严格 mcp→cli）**：依赖方向顺眼了，代价是 `/mcp` 从服务消失、裸跑 stdio 不再自带 hub、全局 bin 变两个。
 - **面板拆独立包**：面板只服务这一套 `/api/*`，没有第二个客户，多一个发布物纯属负担。
 - **`@bobjoy/vconsole-protocol` 发公开包** / **Node 侧跨仓库 alias 直指 fork 源码**：见「背景」，本轮先选发包、量完代价后又翻回双副本，两条都留个记录以免再来一轮。
+
+## 修订（2026-10-07）：`packages/protocol` 这个壳撤掉
+
+上面「（不发布）`@bobjoy/vconsole-protocol` ｜ `packages/protocol`」那行已经不成立：Node 侧那份协议现在是插件包的普通源文件 **`packages/whistle-plugin/src/protocol.ts`**，包名 `@bobjoy/vconsole-protocol` 不再存在。
+
+理由很实在：它只有**一个**消费者（whistle-plugin 里 10 处 import），`private: true` 又永远不会发布，"包"这个形态没换来任何东西，代价是每个看 `packages/` 的人都以为它是漏删——用户原话：「packages/protocol 怎么没有删除」。一个不发布又只服务一个包的目录，留着只会被读成拓扑还没收拾干净。
+
+改了什么：文件挪进 whistle-plugin、`packages/protocol/package.json` 删掉、`tsconfig.json` 的 `baseUrl` + `paths` 一起删（那条映射没有第二个用途）、import 全改成相对路径 `'./protocol.js'`。workspace 成员 4 → 3，发布链和三个发布物不变。
+
+**没改**：双副本契约（同一轮动两处）、`PROTOCOL_VERSION` 软校验（ADR-0008）、"不发包也不跨仓库引用"。两份文件头仍然逐字节相同，只是把 Node 侧位置写成"the whistle plugin's src/protocol.ts"。
