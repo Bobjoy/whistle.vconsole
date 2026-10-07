@@ -356,6 +356,11 @@ async function main() {
       && assetText.startsWith('/*!')
       && assetText.includes('html2canvas 1.4.1'),
     `${asset.status} ${asset.headers.get('content-type')} ${assetText.slice(0, 40)}`);
+  // the probe reads this file with fetch() when a page module loader swallows
+  // the <script> tag, so the response has to be readable cross-origin
+  check('vendored html2canvas is CORS-readable',
+    asset.headers.get('access-control-allow-origin') === '*',
+    String(asset.headers.get('access-control-allow-origin')));
   check('other paths on the hub port still 404', (await fetch(`http://localhost:${PORT}/probe.js`)).status === 404);
 
   // --- screenshot (image content block)

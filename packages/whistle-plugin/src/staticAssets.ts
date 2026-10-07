@@ -40,6 +40,9 @@ export function serveVendoredAsset(url: string, res: ServerResponse): boolean {
   res.writeHead(200, {
     'Content-Type': hit.contentType,
     'Cache-Control': 'public, max-age=86400',
+    // The probe's fallback reads this file with fetch() when the page's own
+    // module loader swallows the <script> tag, which is a cross-origin GET.
+    'Access-Control-Allow-Origin': '*',
   });
   res.end(body);
   return true;
