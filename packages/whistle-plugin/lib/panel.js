@@ -685,9 +685,6 @@ module.exports = function buildPanelHtml() {
     const result = await r.json();
     if (result.isError) { throw new Error((result.content[0] || {}).text || 'tool error'); }
     const text = (result.content[0] || {}).text;
-    if (typeof text === 'string' && text.indexOf('[truncated by whistle-vconsole]') > -1) {
-      throw new Error('结果过大被截断，请缩小 limit 或加筛选条件');
-    }
     try { return JSON.parse(text); } catch (e) { return text; }
   }
 

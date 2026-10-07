@@ -22,8 +22,8 @@ export interface HttpServiceConfig extends StartOptions {
   /** HTTP port (default MCP_HTTP_PORT); the hub WS port stays `port` */
   httpPort?: number;
   /**
-   * The panel markup. `lib/panel.js` is a plain CommonJS template (749 lines of
-   * hand-rolled HTML+JS) that stays outside the bundle, so the caller passes it in.
+   * The panel markup. `lib/panel.js` is a plain CommonJS template of
+   * hand-rolled HTML+JS that stays outside the bundle, so the caller passes it in.
    */
   panelHtml?: string;
   /** probe bundle served at /probe.js (default: `dist/probe.js` beside this bundle) */

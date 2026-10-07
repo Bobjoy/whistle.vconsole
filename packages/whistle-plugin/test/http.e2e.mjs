@@ -21,6 +21,10 @@ const { splitCardText } = buildPanelHtml;
 
 const PORT = 9343;
 
+// flipped by the oversized-result case below so one probe answers get_storage
+// with a payload past the agent-side cap
+let bigStorage = false;
+
 let passed = 0;
 let failed = 0;
 function check(name, cond, detail = '') {
@@ -79,7 +83,9 @@ function makeProbe(sessionId, url, title, deviceName = 'http-e2e-phone', protoco
     const answers = {
       eval: evalAnswer,
       get_dom: { found: true, outerHtml: `<body>${title}</body>`, matchedCount: 1 },
-      get_storage: { cookies: [], localStorage: [{ key: 'from', value: sessionId }], sessionStorage: [] },
+      get_storage: bigStorage
+        ? { cookies: [], localStorage: [{ key: 'blob', value: 'y'.repeat(70_000) }], sessionStorage: [] }
+        : { cookies: [], localStorage: [{ key: 'from', value: sessionId }], sessionStorage: [] },
       page_info: { url, title, referrer: '', userAgent: 'e2e-http', platform: 'test', language: 'zh', viewport: { width: 390, height: 844 }, memory: { usedJSHeapSize: 1, totalJSHeapSize: 2 } },
       screenshot: { format: 'png', width: 9, height: 9, dataBase64: 'iVBORw0KGgo=' },
       replay: { status: 201, statusText: '201', body: '{"created":true}', truncated: false, responseSize: 15, costTime: 7, replayedId: 'a-req-2' },
@@ -206,6 +212,25 @@ async function main() {
   check('get_dom answered by probe A', JSON.parse(text(r)).outerHtml.includes('Page A'), text(r));
   r = await client.callTool({ name: 'get_storage', arguments: { sessionId: 'dev-b' } });
   check('get_storage answered by probe B', JSON.parse(text(r)).localStorage?.[0]?.value === 'dev-b', text(r));
+
+  // 5b. an oversized result: the 60k cap guards the agent's context window, so it
+  // sits on the MCP boundary only — the panel is a human viewer and gets it whole.
+  bigStorage = true;
+  r = await client.callTool({ name: 'get_storage', arguments: { sessionId: 'dev-a' } });
+  check('MCP: a result past 60k is capped for the agent',
+    text(r).includes('[truncated by whistle-vconsole]') && text(r).length <= 60_040,
+    `${text(r).length} chars`);
+  const panelBig = await fetch(`http://127.0.0.1:${PORT + 1}/api/tool`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'get_storage', args: {}, sessionId: 'dev-a' }),
+  }).then((x) => x.json());
+  const bigText = panelBig.content[0].text;
+  check('panel /api/tool: the same result arrives whole and parseable',
+    bigText.indexOf('[truncated') === -1 && JSON.parse(bigText).localStorage[0].value.length === 70_000,
+    `${bigText.length} chars`);
+  check('panel: no longer turns an oversized result into an error line',
+    buildPanelHtml().indexOf('结果过大被截断') === -1);
+  bigStorage = false;
   r = await client.callTool({ name: 'get_network', arguments: { sessionId: 'dev-b' } });
   check('get_network (empty buffer) valid JSON', JSON.parse(text(r)).items.length === 0, text(r));
 

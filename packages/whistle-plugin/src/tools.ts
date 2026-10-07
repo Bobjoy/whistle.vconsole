@@ -33,14 +33,8 @@ function resolveSession(hub: Hub, opts?: ToolCallOptions) {
   return hub.getActiveSession();
 }
 
-const MAX_TEXT_CHARS = 60_000;
-
 export function jsonResult(value: unknown): McpToolResult {
-  let text = JSON.stringify(value, null, 2);
-  if (text.length > MAX_TEXT_CHARS) {
-    text = text.slice(0, MAX_TEXT_CHARS) + '\n…[truncated by whistle-vconsole]';
-  }
-  return { content: [{ type: 'text', text }] };
+  return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
 }
 
 export function errorResult(err: unknown): McpToolResult {

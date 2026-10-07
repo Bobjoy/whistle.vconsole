@@ -19,6 +19,21 @@ export interface ToolBackend {
   ): Promise<McpToolResult>;
 }
 
+// The cap protects the agent's context window, so it belongs at the MCP boundary
+// and nowhere else — the panel (/api/tool) is a human viewer and gets full results.
+const MAX_AGENT_TEXT_CHARS = 60_000;
+
+function capForAgent(result: McpToolResult): McpToolResult {
+  return {
+    ...result,
+    content: result.content.map((block) => (
+      block.type === 'text' && block.text.length > MAX_AGENT_TEXT_CHARS
+        ? { type: 'text' as const, text: block.text.slice(0, MAX_AGENT_TEXT_CHARS) + '\n…[truncated by whistle-vconsole]' }
+        : block
+    )),
+  };
+}
+
 export function createMcpServer(backend: ToolBackend, version: string): McpServer {
   const server = new McpServer({ name: 'whistle-vconsole', version });
 
@@ -40,7 +55,7 @@ export function createMcpServer(backend: ToolBackend, version: string): McpServe
         ? { sessionId: String(args.sessionId) }
         : undefined;
       try {
-        return await backend.handleTool(name, (args || {}) as Record<string, unknown>, opts);
+        return capForAgent(await backend.handleTool(name, (args || {}) as Record<string, unknown>, opts));
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         return { isError: true, content: [{ type: 'text' as const, text: `Error: ${message}` }] };
