@@ -17,18 +17,19 @@ const port = Number(args[0]) || 9443;
 const probeDistIdx = args.indexOf('--probe-dist');
 const probeDist = probeDistIdx > -1 ? args[probeDistIdx + 1] :
   path.resolve(__dirname, '../../packages/vconsole/dist/vconsole.min.js');
-const probeCode = fs.readFileSync(probeDist, 'utf8');
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, `http://localhost:${port}`);
 
   if (u.pathname === '/vconsole.min.js') {
+    // read per request: the probe bundle is rebuilt constantly during
+    // development, and a startup snapshot makes rebuilt fixes look like
+    // they never landed
     res.writeHead(200, {
       'Content-Type': 'application/javascript',
-      // dev asset: always fresh, or probe fixes look like they never landed
       'Cache-Control': 'no-store',
     });
-    res.end(probeCode);
+    res.end(fs.readFileSync(probeDist, 'utf8'));
     return;
   }
 
