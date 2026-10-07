@@ -8,8 +8,8 @@
 
 import type {
   LogItem, NetworkItem, NetworkRequestType, PageInfo, RealDeviceHints,
-} from '@bobjoy/vconsole-protocol';
-import { PROTOCOL_VERSION, WS_BINARY_MARKER } from '@bobjoy/vconsole-protocol';
+} from './protocol.js';
+import { PROTOCOL_VERSION, WS_BINARY_MARKER } from './protocol.js';
 import { parseDeviceLabel, realDeviceFromDeviceName } from './deviceLabel.js';
 
 interface IndexedLog {

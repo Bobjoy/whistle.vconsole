@@ -5,11 +5,7 @@
     "moduleResolution": "Bundler",
     "target": "ES2022",
     "noEmit": true,
-    "types": ["node"],
-    "baseUrl": ".",
-    "paths": {
-      "@bobjoy/vconsole-protocol": ["../protocol/src/protocol.ts"]
-    }
+    "types": ["node"]
   },
   "include": ["src"]
 }

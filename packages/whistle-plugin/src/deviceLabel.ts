@@ -4,7 +4,7 @@
  * Used by list_sessions so agents can tell devices apart without guessing.
  */
 
-import type { RealDeviceHints } from '@bobjoy/vconsole-protocol';
+import type { RealDeviceHints } from './protocol.js';
 
 /** real model/os/touch hints from the probe (see HelloMsg.realDevice) */
 export type { RealDeviceHints };

@@ -7,8 +7,8 @@
 import { WebSocket } from 'ws';
 import type {
   ToolApiName, ApiMsg, CmdResultMsg,
-} from '@bobjoy/vconsole-protocol';
-import { MCP_PROXY_SESSION_ID, PROTOCOL_VERSION } from '@bobjoy/vconsole-protocol';
+} from './protocol.js';
+import { MCP_PROXY_SESSION_ID, PROTOCOL_VERSION } from './protocol.js';
 import type { McpToolResult } from './tools.js';
 
 export interface ProxyHubOptions {

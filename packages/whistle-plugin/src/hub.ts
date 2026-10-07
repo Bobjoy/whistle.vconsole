@@ -11,12 +11,12 @@ import type { IncomingMessage } from 'node:http';
 import { serveVendoredAsset } from './staticAssets.js';
 import type {
   HelloMsg, LogsMsg, NetworkMsg, ProbeMessage, CmdResultMsg, CmdType, ApiMsg,
-} from '@bobjoy/vconsole-protocol';
-import { MCP_PROXY_SESSION_ID, PROTOCOL_VERSION } from '@bobjoy/vconsole-protocol';
+} from './protocol.js';
+import { MCP_PROXY_SESSION_ID, PROTOCOL_VERSION } from './protocol.js';
 import { Session } from './session.js';
 export { Session } from './session.js';
 import { handleTool } from './tools.js';
-import type { ToolApiName } from '@bobjoy/vconsole-protocol';
+import type { ToolApiName } from './protocol.js';
 
 export interface HubConfig {
   host: string;

@@ -25,7 +25,7 @@ export type { ToolCallOptions, McpToolResult } from './tools.js';
 export { createMcpServer } from './mcpServer.js';
 export type { ToolBackend } from './mcpServer.js';
 export { parseDeviceLabel } from './deviceLabel.js';
-export { PROTOCOL_VERSION } from '@bobjoy/vconsole-protocol';
+export { PROTOCOL_VERSION } from './protocol.js';
 
 export const VERSION = '0.3.0';
 

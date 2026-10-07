@@ -4,7 +4,7 @@
  * - proxy mode (port owned by another hub process): forwards over the WS api
  */
 
-import type { ToolApiName } from '@bobjoy/vconsole-protocol';
+import type { ToolApiName } from './protocol.js';
 import type { Hub, Session } from './hub.js';
 
 export type McpContentBlock =

@@ -8,7 +8,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { ToolApiName } from '@bobjoy/vconsole-protocol';
+import type { ToolApiName } from './protocol.js';
 import type { McpToolResult } from './tools.js';
 
 export interface ToolBackend {
