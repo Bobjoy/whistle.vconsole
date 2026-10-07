@@ -1,6 +1,6 @@
 {
   "name": "@bobjoy/vconsole-vite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vite plugin that auto-injects the @bobjoy/vconsole probe into your H5 page during dev.",
   "type": "module",
   "license": "MIT",
@@ -26,7 +26,7 @@
     "h5"
   ],
   "dependencies": {
-    "@bobjoy/vconsole": "workspace:*"
+    "@bobjoy/vconsole": "workspace:^"
   },
   "peerDependencies": {
     "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
