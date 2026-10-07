@@ -3,13 +3,16 @@
  *
  * Left: session list (from list_sessions, in connection order). Click a
  * session → a right-side drawer with vConsole-style tabs: System / Logs /
- * Network / Storage / Screenshot. The JS console input lives at the bottom of
- * the Logs tab. Everything runs through the same tool backend the MCP clients
- * use, targeted at the selected session (no element tab by design).
+ * Network / Element / Storage / Screenshot. The JS console input lives at the
+ * bottom of the Logs tab. Everything runs through the same tool backend the
+ * MCP clients use, targeted at the selected session.
  *
- * Deliberately hand-rolled instead of embedding the fork's svelte components:
- * the on-page vConsole UI is hard-wired to its in-page stores, and a remote
- * renderer only needs the tool API. (chii made the same call for eruda.)
+ * Element is eval-driven: the tab ships a self-contained serializer that runs
+ * on the page through eval_js (elementSnippet below), so the DOM tree works
+ * against every published probe with zero protocol changes. The on-page
+ * vConsole element UI is NOT embedded — it is hard-wired to its in-page
+ * svelte stores, and a remote renderer only needs the tool API. (chii made
+ * the same call for eruda.)
  */
 
 /**
@@ -136,6 +139,18 @@ module.exports = function buildPanelHtml() {
   #net-body .dbody { padding: 0 2px; }
   #net-body .dbody details.hsec:first-child { margin-top: 0; }
   #net-detail h4 { word-break: break-all; }
+
+  /* element tree (eval-driven, see elementSnippet) */
+  #pane-element.on { display: flex; flex-direction: column; overflow: hidden; }
+  #elem-body { flex: 1; overflow: auto; min-height: 0; }
+  #elem-detail { display: none; flex: none; max-height: 45%; overflow: auto; border-top: 1px solid #e5e6eb; padding-top: 8px; }
+  #elem-detail.on { display: block; }
+  .elem-row { display: flex; align-items: baseline; gap: 4px; padding: 2px 6px; font-size: 12px; font-family: ui-monospace, Menlo, monospace; white-space: nowrap; cursor: pointer; border-radius: 4px; }
+  .elem-row:hover { background: #f7f9ff; }
+  .elem-row.sel { background: #f0f5ff; }
+  .elem-tg { flex: none; width: 12px; color: #86909c; cursor: pointer; }
+  .elem-tag { color: #165dff; }
+  .elem-x { color: #86909c; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
@@ -160,6 +175,7 @@ module.exports = function buildPanelHtml() {
       <button data-t="info" class="on">System</button>
       <button data-t="logs">Logs</button>
       <button data-t="network">Network</button>
+      <button data-t="element">Element</button>
       <button data-t="storage">Storage</button>
       <button data-t="screenshot">Screenshot</button>
     </div>
@@ -197,6 +213,14 @@ module.exports = function buildPanelHtml() {
         <span class="spin" id="net-spin"></span>
       </div>
       <div id="net-body"></div>
+    </div>
+    <div class="pane" id="pane-element">
+      <div class="toolbar"><button onclick="loadElementRoot()">刷新</button><span class="muted" style="font-size:12px">点箭头展开、点行看 outerHTML；数据由 eval_js 在页面上实时采集</span><span class="lv-error" id="elem-msg"></span><span class="spin" id="elem-spin"></span></div>
+      <div id="elem-body"></div>
+      <div id="elem-detail">
+        <div class="toolbar"><b style="font-size:12px" id="elem-detail-title"></b><button class="cpy" onclick="copyElemHtml(this)">复制</button><button onclick="closeElemDetail()">关闭</button></div>
+        <pre class="raw" id="elem-detail-pre"></pre>
+      </div>
     </div>
     <div class="pane" id="pane-storage">
       <div class="toolbar"><button onclick="loadStorage()">刷新</button><span class="spin" id="sto-spin"></span><span id="sto-msg" class="muted" style="font-size:12px"></span></div>
@@ -336,12 +360,16 @@ module.exports = function buildPanelHtml() {
     lastNet = null;
     openDetailId = null;
     detailHtml = null;
+    elemNodes = {};
+    elemSelected = null;
     renderSessions();
     document.getElementById('drawer').classList.add('open');
     document.getElementById('d-sid').textContent = id;
     selectTab('info');
     loadLogs(); loadNetwork(); loadStorage(); loadInfo();
     document.getElementById('shot-body').innerHTML = '<span class="muted">点击"截图"按钮生成</span>';
+    document.getElementById('elem-body').innerHTML = '<span class="muted">打开 Element 标签后从页面采集 DOM</span>';
+    document.getElementById('elem-detail').classList.remove('on');
     document.getElementById('eval-out').innerHTML = '<span class="muted">在页面全局上下文执行 JS；结果同时出现在页面的 vConsole 面板。</span>';
   }
   function closeDrawer() { current = null; document.getElementById('drawer').classList.remove('open'); renderSessions(); }
@@ -358,6 +386,7 @@ module.exports = function buildPanelHtml() {
       // switch keeps it from showing stale data. Same for storage/system: their
       // data is command-on-demand, so re-fetch when entering the tab.
       if (b.dataset.t === 'network') { loadNetwork(); }
+      if (b.dataset.t === 'element') { ensureElement(); }
       if (b.dataset.t === 'storage') { loadStorage(); }
       if (b.dataset.t === 'info') { loadInfo(); }
     };
@@ -682,8 +711,222 @@ module.exports = function buildPanelHtml() {
     return lines.join(cont);
   }
 
+  // --- element tab (eval-driven DOM tree) ----------------------------------
+  // The serializer ships to the page through eval_js (elementSnippet below),
+  // so the tree works against every published probe with no protocol change.
+  // Responses are display-strings and serializeOne truncates eval results at
+  // 2000 chars — the snippet paginates the tree and chunks outerHTML to stay
+  // under that; the panel loops until a response reports no next page.
+  let elemNodes = {};
+  let elemSelected = null;
+  let elemDetailText = '';
+
+  function elementSnippet(op, arg) {
+    var W = window;
+    if (!W.__vcElem) {
+      W.__vcElem = {
+        resolve: function (path) {
+          var n = document.documentElement;
+          if (path) {
+            var parts = path.split('.');
+            for (var i = 0; i < parts.length; i++) {
+              n = n.children[Number(parts[i])];
+              if (!n) { return null; }
+            }
+          }
+          return n;
+        },
+        hidden: function (el) {
+          var n = el;
+          while (n) {
+            if (n.id === '__vconsole') { return true; }
+            n = n.parentElement;
+          }
+          return false;
+        },
+        summary: function (el, path) {
+          var a = {};
+          var list = el.attributes || [];
+          var na = Math.min(list.length, 10);
+          for (var i = 0; i < na; i++) { a[list[i].name] = String(list[i].value).slice(0, 60); }
+          var out = { p: path, t: (el.tagName || '?').toLowerCase(), a: a, cc: el.childElementCount };
+          if (el.id) { out.i = el.id; }
+          var cls = el.getAttribute('class');
+          if (cls) { out.c = String(cls).slice(0, 60); }
+          if (el.childElementCount === 0) {
+            var tx = String(el.textContent || '').slice(0, 80);
+            if (tx) { out.x = tx; }
+          }
+          return out;
+        }
+      };
+    }
+    var E = W.__vcElem;
+    if (op === 'tree') {
+      var el = E.resolve(arg.path || '');
+      if (!el) { return JSON.stringify({ error: 'node not found' }); }
+      var kids = [];
+      for (var i = 0; i < el.children.length; i++) {
+        if (!E.hidden(el.children[i])) { kids.push(i); }
+      }
+      var offset = arg.offset || 0;
+      var end = Math.min(offset + Math.min(arg.limit || 12, 20), kids.length);
+      var out = { self: E.summary(el, arg.path || ''), total: kids.length, offset: offset, ch: [], next: null };
+      var next = null;
+      for (var j = offset; j < end; j++) {
+        out.ch.push(E.summary(el.children[kids[j]], (arg.path ? arg.path + '.' : '') + kids[j]));
+        if (JSON.stringify(out).length > 1800 && out.ch.length > 1) {
+          out.ch.pop();
+          next = j;
+          break;
+        }
+      }
+      if (next === null && end < kids.length) { next = end; }
+      out.next = next;
+      return JSON.stringify(out);
+    }
+    if (op === 'html') {
+      var el2 = E.resolve(arg.path || '');
+      if (!el2) { return JSON.stringify({ error: 'node not found' }); }
+      var html = '';
+      try { html = String(el2.outerHTML); } catch (e) { html = '[outerHTML error]'; }
+      var cut = html.length > 20000;
+      W.__vcElemHtml = cut ? html.slice(0, 20000) : html;
+      return JSON.stringify({ len: W.__vcElemHtml.length, cut: cut, s0: W.__vcElemHtml.slice(0, 1800) });
+    }
+    if (op === 'hslice') {
+      return JSON.stringify({ s: String(W.__vcElemHtml || '').slice(arg.i, arg.i + 1800) });
+    }
+    return JSON.stringify({ error: 'unknown op' });
+  }
+
+  async function runElementSnippet(op, arg) {
+    const expr = '(' + elementSnippet.toString() + ')(' + JSON.stringify(op) + ',' + JSON.stringify(arg) + ')';
+    const d = await api('eval_js', { expression: expr }, current);
+    if (d.isException) { throw new Error(d.result); }
+    return JSON.parse(d.result);
+  }
+
+  function elemMsg(text) {
+    document.getElementById('elem-msg').textContent = text || '';
+  }
+
+  async function fetchChildren(path) {
+    const node = elemNodes[path];
+    let offset = 0;
+    for (let guard = 0; guard < 60; guard++) {
+      const r = await runElementSnippet('tree', { path, offset, limit: 12 });
+      if (r.error) { throw new Error(r.error); }
+      Object.assign(node, r.self, { loaded: true });
+      for (const s of r.ch) {
+        if (!elemNodes[s.p]) { elemNodes[s.p] = Object.assign({ loaded: false, expanded: false, children: [] }, s); }
+        node.children.push(s.p);
+      }
+      if (r.next === null || r.next === undefined) { return; }
+      offset = r.next;
+    }
+    throw new Error('子节点过多，展开中断');
+  }
+
+  async function ensureElement() {
+    if (elemNodes[''] && elemNodes[''].loaded) { renderElement(); return; }
+    await loadElementRoot();
+  }
+
+  async function loadElementRoot() {
+    document.getElementById('elem-spin').textContent = '…';
+    elemMsg('');
+    try {
+      elemNodes = { '': { p: '', loaded: false, expanded: true, children: [] } };
+      closeElemDetail();
+      await fetchChildren('');
+      renderElement();
+    } catch (e) {
+      elemMsg('采集失败: ' + e.message);
+    }
+    document.getElementById('elem-spin').textContent = '';
+  }
+
+  function elemRowHtml(n, depth) {
+    const toggle = n.cc > 0 ? (n.expanded ? '▾' : '▸') : '·';
+    const ident = (n.i ? '#' + esc(n.i) : '') + (n.c ? '.' + esc(String(n.c).split(' ').join('.')) : '');
+    const x = n.x ? '<span class="elem-x">' + esc(n.x) + '</span>' : '';
+    return '<div class="elem-row' + (elemSelected === n.p ? ' sel' : '') + '" data-p="' + esc(n.p) + '" style="padding-left:' + (6 + depth * 14) + 'px">' +
+      '<span class="elem-tg" data-act="toggle">' + toggle + '</span>' +
+      '<span><span class="elem-tag">&lt;' + esc(n.t) + '&gt;</span>' +
+      (ident ? '<span class="muted"> ' + ident + '</span>' : '') +
+      (n.cc > 0 ? '<span class="muted"> (' + n.cc + ')</span>' : '') + '</span>' +
+      x + '</div>';
+  }
+
+  function renderElement() {
+    const body = document.getElementById('elem-body');
+    if (!elemNodes[''] || !elemNodes[''].loaded) { body.innerHTML = '<span class="muted">loading…</span>'; return; }
+    const rows = [];
+    const walk = (path, depth) => {
+      const n = elemNodes[path];
+      if (!n) { return; }
+      rows.push(elemRowHtml(n, depth));
+      if (n.expanded && rows.length < 3000) {
+        for (const cp of (n.children || [])) { walk(cp, depth + 1); }
+      }
+    };
+    walk('', 0);
+    body.innerHTML = rows.join('');
+  }
+
+  async function toggleElem(path) {
+    const n = elemNodes[path];
+    if (!n || n.cc === 0) { return; }
+    if (!n.loaded) {
+      document.getElementById('elem-spin').textContent = '…';
+      try { await fetchChildren(path); } catch (e) { elemMsg('展开失败: ' + e.message); return; }
+      document.getElementById('elem-spin').textContent = '';
+    }
+    n.expanded = !n.expanded;
+    renderElement();
+  }
+
+  async function selectElem(path) {
+    elemSelected = path;
+    const n = elemNodes[path];
+    renderElement();
+    document.getElementById('elem-detail').classList.add('on');
+    document.getElementById('elem-detail-title').textContent = '<' + (n ? n.t : '?') + '> ' + path;
+    document.getElementById('elem-detail-pre').textContent = 'loading…';
+    try {
+      const head = await runElementSnippet('html', { path });
+      if (head.error) { throw new Error(head.error); }
+      let html = head.s0 || '';
+      for (let i = 1800; i < head.len; i += 1800) {
+        const r = await runElementSnippet('hslice', { i });
+        html += r.s;
+      }
+      elemDetailText = html;
+      document.getElementById('elem-detail-pre').textContent = html + (head.cut ? '\\n…[已截断：原始 outerHTML 超过 20000 字符]' : '');
+    } catch (e) {
+      document.getElementById('elem-detail-pre').textContent = '加载失败: ' + e.message;
+    }
+  }
+
+  function closeElemDetail() {
+    document.getElementById('elem-detail').classList.remove('on');
+    elemDetailText = '';
+  }
+
+  function copyElemHtml(btn) { copyText(elemDetailText, btn); }
+
+  document.getElementById('elem-body').addEventListener('click', async (e) => {
+    const row = e.target.closest('.elem-row');
+    if (!row) { return; }
+    const p = row.dataset.p;
+    if (e.target.closest('.elem-tg')) { await toggleElem(p); return; }
+    await selectElem(p);
+  });
+
   let stoData = null;
   let stoEditing = null;
+
 
   function renderStorage() {
     const row = (kind, k, v) => {

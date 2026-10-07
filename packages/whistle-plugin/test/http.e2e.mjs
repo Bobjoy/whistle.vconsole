@@ -282,6 +282,13 @@ async function main() {
     panelHtml.indexOf('copyCardUrl(this, event)') > -1 && panelHtml.indexOf('copyLogs(this)') > -1
     && panelHtml.indexOf('复制为cURL') > -1 && panelHtml.indexOf('copyDetailField') > -1
     && panelHtml.indexOf('copyMcp(this)') > -1 && panelHtml.indexOf('copyInfo(this)') > -1);
+  // element tab is eval-driven (zero protocol change): the serializer must be
+  // embedded, run through eval_js, and keep responses under serializeOne's
+  // 2000-char truncation via pagination/chunking
+  check('panel: element tab wired (eval-driven tree + chunked outerHTML)',
+    panelHtml.indexOf('data-t="element"') > -1 && panelHtml.indexOf('function elementSnippet') > -1
+    && panelHtml.indexOf('__vcElem') > -1 && panelHtml.indexOf("api('eval_js'") > -1
+    && panelHtml.indexOf("op === 'hslice'") > -1);
   // the panel html is a build-time template literal: a `\` in it is eaten before
   // the browser sees the script, so a substring match can pass on broken code.
   // Parse the emitted script instead — that is the only check that catches it.
