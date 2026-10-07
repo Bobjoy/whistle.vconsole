@@ -69,9 +69,10 @@ execSync('npm install --omit=dev --no-audit --no-fund --loglevel=error', { cwd: 
 
 // Pack manually instead of `npm pack`: the package.json `files` allowlist makes
 // libnpmpack drop node_modules even when bundleDependencies is set. The archive
-// holds files and symlinks only (same layout `npm pack` emits): npm publish
-// rejects directory entries with E415 "invalid path: package/", and extraction
-// recreates parent dirs on its own. Symlinks (node_modules/.bin) are kept.
+// holds regular files only (same layout `npm pack` emits): npm publish rejects
+// directory entries with E415 "invalid path: package/" and symlink entries with
+// 415 "Symbolic link is not allowed"; parent dirs are recreated on extraction,
+// and .bin shims are rebuilt by npm install from the deps' bin fields.
 // The name keeps whistle's `whistle.` prefix so `w2 install` recognises it.
 const shortName = pkg.name.replace(/^@[^/]+\//, '');
 const outTgz = path.join(monorepo, `${shortName}-${pkg.version}.tgz`);
@@ -83,7 +84,7 @@ const entries = [];
   for (const dirent of dirents) {
     const entryPath = path.join(dir, dirent.name);
     if (dirent.isDirectory()) walk(entryPath);
-    else entries.push(path.relative(work, entryPath));
+    else if (dirent.isFile()) entries.push(path.relative(work, entryPath));
   }
 })(packDir);
 fs.writeFileSync(path.join(work, 'packlist.txt'), entries.join('\n') + '\n');
