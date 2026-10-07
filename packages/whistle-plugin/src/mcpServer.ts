@@ -161,6 +161,51 @@ export function createMcpServer(backend: ToolBackend, version: string): McpServe
     },
   });
 
+  tool('get_vue_tree', {
+    title: 'List Vue apps / expand the component tree',
+    description:
+      'Inspect the active page\'s Vue apps (Vue 2 and Vue 3). Without `app`: lists detected apps ' +
+      '(name, container, readable flag — Vue 3 component trees need a dev build of the page, Vue 2 works even in production). ' +
+      'With `app` (+ optional `path`): expands one level of the component tree, returning child components ' +
+      '(name, root tag, child count). Pagination: `next` carries the offset for the following call. ' +
+      'Runs the same serializer the device panel\'s Vue tab uses, through eval_js — no probe upgrade needed.',
+    inputSchema: {
+      app: z.number().optional().describe('app index from a previous apps listing; omit to list apps'),
+      path: z.string().optional().describe('component path like "0.1" (child indices from previous pages); omit for the app root'),
+      offset: z.number().optional().describe('child pagination offset'),
+      limit: z.number().optional().describe('children per page (max 20, default 12)'),
+    },
+  });
+
+  tool('get_vue_state', {
+    title: 'Read a Vue component\'s state',
+    description:
+      'Read one Vue component\'s state as JSON: props / setup (Vue 3 or 2.7, refs unwrapped) / data / ' +
+      'computed (evaluated) / $route summary / Pinia stores / Vuex state + getters — sections are null when absent. ' +
+      'Args: app + optional component path (see get_vue_tree). Reactive getters run for real; values are budgeted ' +
+      '(depth-limited, strings truncated) and the whole payload is capped at ~20000 chars.',
+    inputSchema: {
+      app: z.number().describe('app index (see get_vue_tree)'),
+      path: z.string().optional().describe('component path like "0.1"; omit for the app root component'),
+    },
+  });
+
+  tool('set_vue_state', {
+    title: 'Write a Vue component\'s state',
+    description:
+      'Write one value into a Vue component\'s state, devtools-style. `key` is a dot path relative to `section`: ' +
+      'data.appTitle, setup.form.name, vuex.calls (writes $store.state directly — bypasses the mutation log), ' +
+      'or pinia.storeId.x (first path segment is the Pinia store id). props/computed are refused — they flow from ' +
+      'parents or derivations. `value` is JSON (strings, numbers, objects). Changes are reactive: the page UI updates.',
+    inputSchema: {
+      app: z.number().describe('app index (see get_vue_tree)'),
+      path: z.string().optional().describe('component path like "0.1"; omit for the app root component'),
+      section: z.enum(['data', 'setup', 'vuex', 'pinia']).describe('which state section to write'),
+      key: z.string().describe('dot path relative to the section, e.g. "appTitle" or "items.0.done"'),
+      value: z.unknown().describe('JSON value to write (objects/arrays/strings/numbers/booleans/null)'),
+    },
+  });
+
   tool('get_storage', {
     title: 'Read cookies / localStorage / sessionStorage',
     description:

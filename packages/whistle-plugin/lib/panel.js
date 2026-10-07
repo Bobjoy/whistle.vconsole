@@ -39,6 +39,364 @@ function splitCardText(label, deviceName) {
   return { label, muted: deviceName };
 }
 
+/**
+ * Vue serializer shipped to the page through eval_js. Single source of truth:
+ * the panel injects it via .toString() (same pattern as splitCardText) and
+ * the get_vue_* MCP tools eval the same function hub-side.
+ */
+function vueSnippet(op, arg) {
+  var W = window;
+  if (!W.__vcVue) {
+    W.__vcVue = {
+      name: function (inst) {
+        var t = inst && inst.type;
+        return (t && (t.name || t.__name)) || 'Anonymous';
+      },
+      tagOf: function (inst) {
+        try {
+          var el = inst.subTree && inst.subTree.el;
+          return el && el.nodeType === 1 ? el.tagName.toLowerCase() : '';
+        } catch (e) { return ''; }
+      },
+      kids: function (inst) {
+        var out = [];
+        (function walk(v) {
+          if (!v || typeof v !== 'object') { return; }
+          if (v.component) { out.push(v.component); return; }
+          if (v.suspense && v.suspense.activeBranch) { walk(v.suspense.activeBranch); return; }
+          var ch = v.children;
+          if (Array.isArray(ch)) {
+            for (var i = 0; i < ch.length; i++) { walk(ch[i]); }
+          }
+        })(inst.subTree);
+        return out;
+      },
+      findApps: function () {
+        var out = [];
+        var seen = [];
+        function push(entry) {
+          var key = entry.v === 3 ? entry.app : entry.vm;
+          for (var j = 0; j < seen.length; j++) { if (seen[j] === key) { return; } }
+          seen.push(key);
+          out.push(entry);
+        }
+        var els = document.querySelectorAll('[data-v-app], #app');
+        for (var i = 0; i < els.length; i++) {
+          if (els[i].__vue_app__ && els[i].__vue_app__._instance) { push({ v: 3, app: els[i].__vue_app__, container: els[i] }); }
+        }
+        // Vue 2 sets el.__vue__ on the mount container unconditionally, even
+        // in production builds (_isVue guards against same-name accidents).
+        // _update re-stamps it on EVERY component's $el, so only instances
+        // without $parent are real app roots.
+        var all = document.body ? document.body.getElementsByTagName('*') : [];
+        var cap = Math.min(all.length, 400);
+        for (var k = 0; k < cap; k++) {
+          if (all[k].__vue_app__ && all[k].__vue_app__._instance) { push({ v: 3, app: all[k].__vue_app__, container: all[k] }); }
+          if (all[k].__vue__ && all[k].__vue__._isVue && !all[k].__vue__.$parent) { push({ v: 2, vm: all[k].__vue__, container: all[k] }); }
+        }
+        return out;
+      },
+      name2: function (vm) {
+        var o = vm && vm.$options;
+        return (o && (o.name || o._componentTag)) || 'Anonymous';
+      },
+      tagOf2: function (vm) {
+        try {
+          return vm.$el && vm.$el.nodeType === 1 ? vm.$el.tagName.toLowerCase() : '';
+        } catch (e) { return ''; }
+      },
+      resolve2: function (vm, path) {
+        var inst = vm;
+        if (path) {
+          var segs = path.split('.');
+          for (var i = 0; i < segs.length; i++) {
+            inst = inst.$children[Number(segs[i])];
+            if (!inst) { return null; }
+          }
+        }
+        return inst;
+      },
+      grabObj: function (obj, depth) {
+        if (!obj || typeof obj !== 'object') { return null; }
+        var o = {};
+        var ks = Object.keys(obj);
+        for (var i = 0; i < Math.min(ks.length, 30); i++) {
+          try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], depth === undefined ? 2 : depth); } catch (e) { o[ks[i]] = '[unreadable]'; }
+        }
+        return o;
+      },
+      vuexOf: function (proxyLike) {
+        try {
+          var store = proxyLike && proxyLike.$store;
+          if (!store || !store.state) { return null; }
+          return {
+            state: E.grabObj(store.state, 3),
+            getters: (function () {
+              var g = store.getters;
+              if (!g) { return null; }
+              var o = {};
+              var ks = Object.keys(g);
+              for (var i = 0; i < Math.min(ks.length, 20); i++) {
+                try { o[ks[i]] = E.val(g[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
+              }
+              return o;
+            })(),
+          };
+        } catch (e) { return null; }
+      },
+      rootInst: function (app, el) {
+        // prod builds never assign app._instance (verified on 3.5.13: only
+        // unmount reads it); dev builds do, and also tag every patched
+        // element with __vueParentComponent — try both, else unreadable
+        var inst = app._instance;
+        if (!inst && el && el.firstElementChild && el.firstElementChild.__vueParentComponent) {
+          inst = el.firstElementChild.__vueParentComponent;
+        }
+        if (!inst) { return null; }
+        try { while (inst.parent) { inst = inst.parent; } } catch (e) { /* keep what we got */ }
+        return inst;
+      },
+      resolveInst: function (app, path) {
+        var inst = app._instance;
+        if (path) {
+          var segs = path.split('.');
+          for (var i = 0; i < segs.length; i++) {
+            inst = W.__vcVue.kids(inst)[Number(segs[i])];
+            if (!inst) { return null; }
+          }
+        }
+        return inst;
+      },
+      val: function (v, depth) {
+        if (v === null) { return null; }
+        var t = typeof v;
+        if (t === 'string') { return v.length > 120 ? v.slice(0, 120) + '…' : v; }
+        if (t === 'number' || t === 'boolean') { return v; }
+        if (t === 'function') { return '[fn]'; }
+        if (t === 'object') {
+          if (depth <= 0) { return Array.isArray(v) ? '[…' + v.length + ']' : '{…}'; }
+          try {
+            if (v.__v_isRef) { return W.__vcVue.val(v.value, depth); }
+            if (v instanceof Date) { return v.toISOString(); }
+            if (typeof Element !== 'undefined' && v instanceof Element) { return '<' + v.tagName.toLowerCase() + '>'; }
+            if (Array.isArray(v)) {
+              var r = [];
+              var n = Math.min(v.length, 20);
+              for (var i = 0; i < n; i++) { r.push(W.__vcVue.val(v[i], depth - 1)); }
+              if (v.length > 20) { r.push('…+' + (v.length - 20)); }
+              return r;
+            }
+            var o = {};
+            var ks = Object.keys(v);
+            var nk = Math.min(ks.length, 20);
+            for (var j = 0; j < nk; j++) {
+              try { o[ks[j]] = W.__vcVue.val(v[ks[j]], depth - 1); } catch (e) { o[ks[j]] = '[unreadable]'; }
+            }
+            if (ks.length > 20) { o['…'] = '+' + (ks.length - 20); }
+            return o;
+          } catch (e2) { return '[unreadable]'; }
+        }
+        return String(v).slice(0, 60);
+      },
+      computedOf3: function (inst) {
+        // options-API computed; setup computeds already surface (unwrapped)
+        // in the setup section. Values are read off the public proxy.
+        var defs = inst.computed;
+        if (!defs || !Object.keys(defs).length) { return null; }
+        var o = {};
+        var ks = Object.keys(defs);
+        for (var i = 0; i < Math.min(ks.length, 20); i++) {
+          try { o[ks[i]] = E.val(inst.proxy[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
+        }
+        return o;
+      },
+      computedOf2: function (vm) {
+        var defs = vm.$options && vm.$options.computed;
+        if (!defs || !Object.keys(defs).length) { return null; }
+        var o = {};
+        var ks = Object.keys(defs);
+        for (var i = 0; i < Math.min(ks.length, 20); i++) {
+          try { o[ks[i]] = E.val(vm[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
+        }
+        return o;
+      },
+      routeOf: function (proxyLike) {
+        try {
+          var r = proxyLike && proxyLike.$route;
+          if (!r) { return null; }
+          return {
+            fullPath: r.fullPath,
+            name: r.name === undefined ? null : r.name,
+            params: E.val(r.params, 1),
+            query: E.val(r.query, 1),
+          };
+        } catch (e) { return null; }
+      },
+      piniaOf: function (inst) {
+        try {
+          var gp = inst.appContext && inst.appContext.config && inst.appContext.config.globalProperties;
+          var pinia = gp && gp.$pinia;
+          if (pinia && pinia._s && pinia._s.size) {
+            var out = {};
+            pinia._s.forEach(function (store, id) { out[id] = E.grabObj(store.$state || store); });
+            return out;
+          }
+        } catch (e) { /* not installed */ }
+        return null;
+      },
+      stateOf: function (inst) {
+        return {
+          props: E.grabObj(inst.props),
+          setup: E.grabObj(inst.setupState),
+          data: E.grabObj(inst.data),
+          computed: E.computedOf3(inst),
+          route: E.routeOf(inst.proxy),
+          pinia: E.piniaOf(inst),
+          vuex: E.vuexOf(inst.proxy),
+        };
+      },
+      // Vue 2.7's composition API keeps setup state on _setupState when present
+      stateOf2: function (vm) {
+        return {
+          props: E.grabObj(vm.$props),
+          setup: E.grabObj(vm._setupState),
+          data: E.grabObj(vm._data),
+          computed: E.computedOf2(vm),
+          route: E.routeOf(vm),
+          pinia: null,
+          vuex: E.vuexOf(vm),
+        };
+      },
+    };
+  }
+  var E = W.__vcVue;
+  if (op === 'apps') {
+    var found = E.findApps();
+    var apps = [];
+    for (var i = 0; i < found.length; i++) {
+      var f = found[i];
+      var name = '?';
+      var tag = '';
+      var readable = true;
+      if (f.v === 3) {
+        var root = E.rootInst(f.app, f.container);
+        name = root ? E.name(root) : '(unknown)';
+        tag = root ? E.tagOf(root) : '';
+        readable = !!root;
+      } else {
+        name = E.name2(f.vm);
+        tag = E.tagOf2(f.vm);
+      }
+      apps.push({
+        i: apps.length,
+        v: f.v,
+        name: name,
+        tag: tag,
+        container: (f.container.tagName || '').toLowerCase() + (f.container.id ? '#' + f.container.id : ''),
+        readable: readable,
+      });
+    }
+    W.__vcVueApps = found;
+    return JSON.stringify({ apps: apps });
+  }
+  if (op === 'tree') {
+    var entry = (W.__vcVueApps || [])[arg.app];
+    if (!entry) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+    var inst = entry.v === 3
+      ? (arg.path ? E.resolveInst(entry.app, arg.path) : E.rootInst(entry.app, entry.container))
+      : E.resolve2(entry.vm, arg.path || '');
+    if (!inst) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
+    var kids = entry.v === 3 ? E.kids(inst) : inst.$children;
+    var offset = arg.offset || 0;
+    var end = Math.min(offset + Math.min(arg.limit || 12, 20), kids.length);
+    var out = { total: kids.length, offset: offset, ch: [], next: null };
+    var next = null;
+    for (var j = offset; j < end; j++) {
+      var c = kids[j];
+      out.ch.push({
+        n: entry.v === 3 ? E.name(c) : E.name2(c),
+        tag: entry.v === 3 ? E.tagOf(c) : E.tagOf2(c),
+        cc: entry.v === 3 ? E.kids(c).length : c.$children.length,
+      });
+      if (JSON.stringify(out).length > 1800 && out.ch.length > 1) { out.ch.pop(); next = j; break; }
+    }
+    if (next === null && end < kids.length) { next = end; }
+    out.next = next;
+    return JSON.stringify(out);
+  }
+  if (op === 'state') {
+    var entry2 = (W.__vcVueApps || [])[arg.app];
+    if (!entry2) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+    var inst2 = entry2.v === 3
+      ? (arg.path ? E.resolveInst(entry2.app, arg.path) : E.rootInst(entry2.app, entry2.container))
+      : E.resolve2(entry2.vm, arg.path || '');
+    if (!inst2) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
+    var st = entry2.v === 3 ? E.stateOf(inst2) : E.stateOf2(inst2);
+    var text = JSON.stringify(st);
+    var cut = text.length > 20000;
+    W.__vcVueState = cut ? text.slice(0, 20000) : text;
+    return JSON.stringify({
+      name: entry2.v === 3 ? E.name(inst2) : E.name2(inst2),
+      len: W.__vcVueState.length,
+      cut: cut,
+      s0: W.__vcVueState.slice(0, 1800),
+    });
+  }
+  if (op === 'sslice') {
+    return JSON.stringify({ s: String(W.__vcVueState || '').slice(arg.i, arg.i + 1800) });
+  }
+  if (op === 'set') {
+    // state writeback, devtools-style: dot path relative to a state section
+    // (data.items.0.done / setup.form.name / vuex.calls / pinia.env.envName).
+    // props/computed are rejected — they flow from parents or derivations.
+    // vuex writes store.state directly (bypasses the mutation log) and
+    // pinia takes storeId as the first path segment.
+    var entry3 = (W.__vcVueApps || [])[arg.app];
+    if (!entry3) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+    var inst3 = entry3.v === 3
+      ? (arg.path ? E.resolveInst(entry3.app, arg.path) : E.rootInst(entry3.app, entry3.container))
+      : E.resolve2(entry3.vm, arg.path || '');
+    if (!inst3) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
+    var sec = arg.section;
+    var keyPath = String(arg.key || '');
+    var target = null;
+    if (sec === 'data' || sec === 'setup') {
+      target = entry3.v === 3
+        ? (sec === 'data' ? inst3.data : inst3.setupState)
+        : (sec === 'data' ? (inst3._data || inst3.$data) : inst3._setupState);
+      if (!target) { return JSON.stringify({ error: '该组件没有 ' + sec + ' 状态' }); }
+    } else if (sec === 'vuex') {
+      var vstore = entry3.v === 3 ? (inst3.proxy && inst3.proxy.$store) : inst3.$store;
+      if (!vstore || !vstore.state) { return JSON.stringify({ error: '该组件没有 Vuex store' }); }
+      target = vstore.state;
+    } else if (sec === 'pinia') {
+      if (entry3.v !== 3) { return JSON.stringify({ error: 'Pinia 回写仅支持 Vue 3' }); }
+      var gp = inst3.appContext && inst3.appContext.config && inst3.appContext.config.globalProperties;
+      var pinia = gp && gp.$pinia;
+      if (!pinia || !pinia._s || !pinia._s.size) { return JSON.stringify({ error: '未检测到 Pinia' }); }
+      var segsP = keyPath.split('.');
+      var pstore = null;
+      pinia._s.forEach(function (st, id) { if (id === segsP[0]) { pstore = st; } });
+      if (!pstore) { return JSON.stringify({ error: 'Pinia store 不存在: ' + segsP[0] }); }
+      target = pstore.$state;
+      keyPath = segsP.slice(1).join('.');
+      if (!keyPath) { return JSON.stringify({ error: 'pinia 路径需要 store id 后的状态路径，如 pinia.env.envName' }); }
+    } else {
+      return JSON.stringify({ error: '只能写 data/setup/vuex/pinia（props/computed 不可写）' });
+    }
+    var segs2 = keyPath.split('.');
+    var cur = target;
+    for (var si = 0; si < segs2.length - 1; si++) {
+      try { cur = cur[segs2[si]]; } catch (e) { return JSON.stringify({ error: '路径不可读: ' + segs2[si] }); }
+      if (!cur || typeof cur !== 'object') { return JSON.stringify({ error: '路径中间不是对象: ' + segs2[si] }); }
+    }
+    var lastKey = segs2[segs2.length - 1];
+    try { cur[lastKey] = arg.value; } catch (e) { return JSON.stringify({ error: '写入失败: ' + e.message }); }
+    return JSON.stringify({ ok: true, key: arg.key, value: E.val(arg.value, 1) });
+  }
+  return JSON.stringify({ error: 'unknown op' });
+}
+
 module.exports = function buildPanelHtml() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -269,6 +627,8 @@ module.exports = function buildPanelHtml() {
   const netCache = {};
   // injected from the Node-side definition above so panel and unit test share one implementation
   const splitCardText = ${splitCardText.toString()};
+  // same source runs hub-side: the get_vue_* MCP tools eval this exact function
+  const vueSnippet = ${vueSnippet.toString()};
   // a panel opened from another machine must carry the hub token it was handed
   // in its own URL; on the dev machine (loopback) there is nothing to carry
   const T = new URLSearchParams(location.search).get('t') || '';
@@ -971,359 +1331,6 @@ module.exports = function buildPanelHtml() {
   let vueDetailPath = null;
   let lastVueRefresh = 0;
 
-  function vueSnippet(op, arg) {
-    var W = window;
-    if (!W.__vcVue) {
-      W.__vcVue = {
-        name: function (inst) {
-          var t = inst && inst.type;
-          return (t && (t.name || t.__name)) || 'Anonymous';
-        },
-        tagOf: function (inst) {
-          try {
-            var el = inst.subTree && inst.subTree.el;
-            return el && el.nodeType === 1 ? el.tagName.toLowerCase() : '';
-          } catch (e) { return ''; }
-        },
-        kids: function (inst) {
-          var out = [];
-          (function walk(v) {
-            if (!v || typeof v !== 'object') { return; }
-            if (v.component) { out.push(v.component); return; }
-            if (v.suspense && v.suspense.activeBranch) { walk(v.suspense.activeBranch); return; }
-            var ch = v.children;
-            if (Array.isArray(ch)) {
-              for (var i = 0; i < ch.length; i++) { walk(ch[i]); }
-            }
-          })(inst.subTree);
-          return out;
-        },
-        findApps: function () {
-          var out = [];
-          var seen = [];
-          function push(entry) {
-            var key = entry.v === 3 ? entry.app : entry.vm;
-            for (var j = 0; j < seen.length; j++) { if (seen[j] === key) { return; } }
-            seen.push(key);
-            out.push(entry);
-          }
-          var els = document.querySelectorAll('[data-v-app], #app');
-          for (var i = 0; i < els.length; i++) {
-            if (els[i].__vue_app__ && els[i].__vue_app__._instance) { push({ v: 3, app: els[i].__vue_app__, container: els[i] }); }
-          }
-          // Vue 2 sets el.__vue__ on the mount container unconditionally, even
-          // in production builds (_isVue guards against same-name accidents).
-          // _update re-stamps it on EVERY component's $el, so only instances
-          // without $parent are real app roots.
-          var all = document.body ? document.body.getElementsByTagName('*') : [];
-          var cap = Math.min(all.length, 400);
-          for (var k = 0; k < cap; k++) {
-            if (all[k].__vue_app__ && all[k].__vue_app__._instance) { push({ v: 3, app: all[k].__vue_app__, container: all[k] }); }
-            if (all[k].__vue__ && all[k].__vue__._isVue && !all[k].__vue__.$parent) { push({ v: 2, vm: all[k].__vue__, container: all[k] }); }
-          }
-          return out;
-        },
-        name2: function (vm) {
-          var o = vm && vm.$options;
-          return (o && (o.name || o._componentTag)) || 'Anonymous';
-        },
-        tagOf2: function (vm) {
-          try {
-            return vm.$el && vm.$el.nodeType === 1 ? vm.$el.tagName.toLowerCase() : '';
-          } catch (e) { return ''; }
-        },
-        resolve2: function (vm, path) {
-          var inst = vm;
-          if (path) {
-            var segs = path.split('.');
-            for (var i = 0; i < segs.length; i++) {
-              inst = inst.$children[Number(segs[i])];
-              if (!inst) { return null; }
-            }
-          }
-          return inst;
-        },
-        grabObj: function (obj, depth) {
-          if (!obj || typeof obj !== 'object') { return null; }
-          var o = {};
-          var ks = Object.keys(obj);
-          for (var i = 0; i < Math.min(ks.length, 30); i++) {
-            try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], depth === undefined ? 2 : depth); } catch (e) { o[ks[i]] = '[unreadable]'; }
-          }
-          return o;
-        },
-        vuexOf: function (proxyLike) {
-          try {
-            var store = proxyLike && proxyLike.$store;
-            if (!store || !store.state) { return null; }
-            return {
-              state: E.grabObj(store.state, 3),
-              getters: (function () {
-                var g = store.getters;
-                if (!g) { return null; }
-                var o = {};
-                var ks = Object.keys(g);
-                for (var i = 0; i < Math.min(ks.length, 20); i++) {
-                  try { o[ks[i]] = E.val(g[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
-                }
-                return o;
-              })(),
-            };
-          } catch (e) { return null; }
-        },
-        rootInst: function (app, el) {
-          // prod builds never assign app._instance (verified on 3.5.13: only
-          // unmount reads it); dev builds do, and also tag every patched
-          // element with __vueParentComponent — try both, else unreadable
-          var inst = app._instance;
-          if (!inst && el && el.firstElementChild && el.firstElementChild.__vueParentComponent) {
-            inst = el.firstElementChild.__vueParentComponent;
-          }
-          if (!inst) { return null; }
-          try { while (inst.parent) { inst = inst.parent; } } catch (e) { /* keep what we got */ }
-          return inst;
-        },
-        resolveInst: function (app, path) {
-          var inst = app._instance;
-          if (path) {
-            var segs = path.split('.');
-            for (var i = 0; i < segs.length; i++) {
-              inst = W.__vcVue.kids(inst)[Number(segs[i])];
-              if (!inst) { return null; }
-            }
-          }
-          return inst;
-        },
-        val: function (v, depth) {
-          if (v === null) { return null; }
-          var t = typeof v;
-          if (t === 'string') { return v.length > 120 ? v.slice(0, 120) + '…' : v; }
-          if (t === 'number' || t === 'boolean') { return v; }
-          if (t === 'function') { return '[fn]'; }
-          if (t === 'object') {
-            if (depth <= 0) { return Array.isArray(v) ? '[…' + v.length + ']' : '{…}'; }
-            try {
-              if (v.__v_isRef) { return W.__vcVue.val(v.value, depth); }
-              if (v instanceof Date) { return v.toISOString(); }
-              if (typeof Element !== 'undefined' && v instanceof Element) { return '<' + v.tagName.toLowerCase() + '>'; }
-              if (Array.isArray(v)) {
-                var r = [];
-                var n = Math.min(v.length, 20);
-                for (var i = 0; i < n; i++) { r.push(W.__vcVue.val(v[i], depth - 1)); }
-                if (v.length > 20) { r.push('…+' + (v.length - 20)); }
-                return r;
-              }
-              var o = {};
-              var ks = Object.keys(v);
-              var nk = Math.min(ks.length, 20);
-              for (var j = 0; j < nk; j++) {
-                try { o[ks[j]] = W.__vcVue.val(v[ks[j]], depth - 1); } catch (e) { o[ks[j]] = '[unreadable]'; }
-              }
-              if (ks.length > 20) { o['…'] = '+' + (ks.length - 20); }
-              return o;
-            } catch (e2) { return '[unreadable]'; }
-          }
-          return String(v).slice(0, 60);
-        },
-        computedOf3: function (inst) {
-          // options-API computed; setup computeds already surface (unwrapped)
-          // in the setup section. Values are read off the public proxy.
-          var defs = inst.computed;
-          if (!defs || !Object.keys(defs).length) { return null; }
-          var o = {};
-          var ks = Object.keys(defs);
-          for (var i = 0; i < Math.min(ks.length, 20); i++) {
-            try { o[ks[i]] = E.val(inst.proxy[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
-          }
-          return o;
-        },
-        computedOf2: function (vm) {
-          var defs = vm.$options && vm.$options.computed;
-          if (!defs || !Object.keys(defs).length) { return null; }
-          var o = {};
-          var ks = Object.keys(defs);
-          for (var i = 0; i < Math.min(ks.length, 20); i++) {
-            try { o[ks[i]] = E.val(vm[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
-          }
-          return o;
-        },
-        routeOf: function (proxyLike) {
-          try {
-            var r = proxyLike && proxyLike.$route;
-            if (!r) { return null; }
-            return {
-              fullPath: r.fullPath,
-              name: r.name === undefined ? null : r.name,
-              params: E.val(r.params, 1),
-              query: E.val(r.query, 1),
-            };
-          } catch (e) { return null; }
-        },
-        piniaOf: function (inst) {
-          try {
-            var gp = inst.appContext && inst.appContext.config && inst.appContext.config.globalProperties;
-            var pinia = gp && gp.$pinia;
-            if (pinia && pinia._s && pinia._s.size) {
-              var out = {};
-              pinia._s.forEach(function (store, id) { out[id] = E.grabObj(store.$state || store); });
-              return out;
-            }
-          } catch (e) { /* not installed */ }
-          return null;
-        },
-        stateOf: function (inst) {
-          return {
-            props: E.grabObj(inst.props),
-            setup: E.grabObj(inst.setupState),
-            data: E.grabObj(inst.data),
-            computed: E.computedOf3(inst),
-            route: E.routeOf(inst.proxy),
-            pinia: E.piniaOf(inst),
-            vuex: E.vuexOf(inst.proxy),
-          };
-        },
-        // Vue 2.7's composition API keeps setup state on _setupState when present
-        stateOf2: function (vm) {
-          return {
-            props: E.grabObj(vm.$props),
-            setup: E.grabObj(vm._setupState),
-            data: E.grabObj(vm._data),
-            computed: E.computedOf2(vm),
-            route: E.routeOf(vm),
-            pinia: null,
-            vuex: E.vuexOf(vm),
-          };
-        },
-      };
-    }
-    var E = W.__vcVue;
-    if (op === 'apps') {
-      var found = E.findApps();
-      var apps = [];
-      for (var i = 0; i < found.length; i++) {
-        var f = found[i];
-        var name = '?';
-        var tag = '';
-        var readable = true;
-        if (f.v === 3) {
-          var root = E.rootInst(f.app, f.container);
-          name = root ? E.name(root) : '(unknown)';
-          tag = root ? E.tagOf(root) : '';
-          readable = !!root;
-        } else {
-          name = E.name2(f.vm);
-          tag = E.tagOf2(f.vm);
-        }
-        apps.push({
-          i: apps.length,
-          v: f.v,
-          name: name,
-          tag: tag,
-          container: (f.container.tagName || '').toLowerCase() + (f.container.id ? '#' + f.container.id : ''),
-          readable: readable,
-        });
-      }
-      W.__vcVueApps = found;
-      return JSON.stringify({ apps: apps });
-    }
-    if (op === 'tree') {
-      var entry = (W.__vcVueApps || [])[arg.app];
-      if (!entry) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
-      var inst = entry.v === 3
-        ? (arg.path ? E.resolveInst(entry.app, arg.path) : E.rootInst(entry.app, entry.container))
-        : E.resolve2(entry.vm, arg.path || '');
-      if (!inst) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
-      var kids = entry.v === 3 ? E.kids(inst) : inst.$children;
-      var offset = arg.offset || 0;
-      var end = Math.min(offset + Math.min(arg.limit || 12, 20), kids.length);
-      var out = { total: kids.length, offset: offset, ch: [], next: null };
-      var next = null;
-      for (var j = offset; j < end; j++) {
-        var c = kids[j];
-        out.ch.push({
-          n: entry.v === 3 ? E.name(c) : E.name2(c),
-          tag: entry.v === 3 ? E.tagOf(c) : E.tagOf2(c),
-          cc: entry.v === 3 ? E.kids(c).length : c.$children.length,
-        });
-        if (JSON.stringify(out).length > 1800 && out.ch.length > 1) { out.ch.pop(); next = j; break; }
-      }
-      if (next === null && end < kids.length) { next = end; }
-      out.next = next;
-      return JSON.stringify(out);
-    }
-    if (op === 'state') {
-      var entry2 = (W.__vcVueApps || [])[arg.app];
-      if (!entry2) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
-      var inst2 = entry2.v === 3
-        ? (arg.path ? E.resolveInst(entry2.app, arg.path) : E.rootInst(entry2.app, entry2.container))
-        : E.resolve2(entry2.vm, arg.path || '');
-      if (!inst2) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
-      var st = entry2.v === 3 ? E.stateOf(inst2) : E.stateOf2(inst2);
-      var text = JSON.stringify(st);
-      var cut = text.length > 20000;
-      W.__vcVueState = cut ? text.slice(0, 20000) : text;
-      return JSON.stringify({
-        name: entry2.v === 3 ? E.name(inst2) : E.name2(inst2),
-        len: W.__vcVueState.length,
-        cut: cut,
-        s0: W.__vcVueState.slice(0, 1800),
-      });
-    }
-    if (op === 'sslice') {
-      return JSON.stringify({ s: String(W.__vcVueState || '').slice(arg.i, arg.i + 1800) });
-    }
-    if (op === 'set') {
-      // state writeback, devtools-style: dot path relative to a state section
-      // (data.items.0.done / setup.form.name / vuex.calls / pinia.env.envName).
-      // props/computed are rejected — they flow from parents or derivations.
-      // vuex writes store.state directly (bypasses the mutation log) and
-      // pinia takes storeId as the first path segment.
-      var entry3 = (W.__vcVueApps || [])[arg.app];
-      if (!entry3) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
-      var inst3 = entry3.v === 3
-        ? (arg.path ? E.resolveInst(entry3.app, arg.path) : E.rootInst(entry3.app, entry3.container))
-        : E.resolve2(entry3.vm, arg.path || '');
-      if (!inst3) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
-      var sec = arg.section;
-      var keyPath = String(arg.key || '');
-      var target = null;
-      if (sec === 'data' || sec === 'setup') {
-        target = entry3.v === 3
-          ? (sec === 'data' ? inst3.data : inst3.setupState)
-          : (sec === 'data' ? (inst3._data || inst3.$data) : inst3._setupState);
-        if (!target) { return JSON.stringify({ error: '该组件没有 ' + sec + ' 状态' }); }
-      } else if (sec === 'vuex') {
-        var vstore = entry3.v === 3 ? (inst3.proxy && inst3.proxy.$store) : inst3.$store;
-        if (!vstore || !vstore.state) { return JSON.stringify({ error: '该组件没有 Vuex store' }); }
-        target = vstore.state;
-      } else if (sec === 'pinia') {
-        if (entry3.v !== 3) { return JSON.stringify({ error: 'Pinia 回写仅支持 Vue 3' }); }
-        var gp = inst3.appContext && inst3.appContext.config && inst3.appContext.config.globalProperties;
-        var pinia = gp && gp.$pinia;
-        if (!pinia || !pinia._s || !pinia._s.size) { return JSON.stringify({ error: '未检测到 Pinia' }); }
-        var segsP = keyPath.split('.');
-        var pstore = null;
-        pinia._s.forEach(function (st, id) { if (id === segsP[0]) { pstore = st; } });
-        if (!pstore) { return JSON.stringify({ error: 'Pinia store 不存在: ' + segsP[0] }); }
-        target = pstore.$state;
-        keyPath = segsP.slice(1).join('.');
-        if (!keyPath) { return JSON.stringify({ error: 'pinia 路径需要 store id 后的状态路径，如 pinia.env.envName' }); }
-      } else {
-        return JSON.stringify({ error: '只能写 data/setup/vuex/pinia（props/computed 不可写）' });
-      }
-      var segs2 = keyPath.split('.');
-      var cur = target;
-      for (var si = 0; si < segs2.length - 1; si++) {
-        try { cur = cur[segs2[si]]; } catch (e) { return JSON.stringify({ error: '路径不可读: ' + segs2[si] }); }
-        if (!cur || typeof cur !== 'object') { return JSON.stringify({ error: '路径中间不是对象: ' + segs2[si] }); }
-      }
-      var lastKey = segs2[segs2.length - 1];
-      try { cur[lastKey] = arg.value; } catch (e) { return JSON.stringify({ error: '写入失败: ' + e.message }); }
-      return JSON.stringify({ ok: true, key: arg.key, value: E.val(arg.value, 1) });
-    }
-    return JSON.stringify({ error: 'unknown op' });
-  }
-
   async function runVueSnippet(op, arg) {
     const expr = '(' + vueSnippet.toString() + ')(' + JSON.stringify(op) + ',' + JSON.stringify(arg) + ')';
     const d = await api('eval_js', { expression: expr }, current);
@@ -1734,3 +1741,4 @@ module.exports = function buildPanelHtml() {
 }
 
 module.exports.splitCardText = splitCardText;
+module.exports.vueSnippet = vueSnippet;

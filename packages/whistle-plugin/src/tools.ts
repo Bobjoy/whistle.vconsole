@@ -6,6 +6,7 @@
 
 import type { ToolApiName } from './protocol.js';
 import type { Hub, Session } from './hub.js';
+import { fetchVueStateText, parseVueEvalResult, vueEvalExpr } from './vueTools.js';
 
 export type McpContentBlock =
   | { type: 'text'; text: string }
@@ -150,6 +151,69 @@ export async function handleTool(
           selector: String(args.selector),
           limit: num(args.limit),
         }, 30000, opts.sessionId));
+
+      case 'get_vue_tree': {
+        // runs the panel's page-side vue serializer through the plain `eval`
+        // command, so these tools work against every published probe
+        const app = num(args.app);
+        const treeExpr = vueEvalExpr(app === undefined ? 'apps' : 'tree', {
+          app,
+          path: str(args.path) || '',
+          offset: num(args.offset),
+          limit: num(args.limit),
+        });
+        const parsed = parseVueEvalResult(
+          await hub.sendCommand('eval', { expression: treeExpr }, 30000, opts.sessionId),
+        );
+        if (parsed.error) {
+          return errorResult(new Error(String(parsed.error)));
+        }
+        return jsonResult(parsed);
+      }
+
+      case 'get_vue_state': {
+        const app = num(args.app);
+        if (app === undefined) {
+          return errorResult(new Error('需要 app 参数（先不带 app 调 get_vue_tree 列出应用）'));
+        }
+        const r = await fetchVueStateText(
+          (expression) => hub.sendCommand('eval', { expression }, 30000, opts.sessionId),
+          app,
+          str(args.path) || '',
+        );
+        let state: unknown = r.text;
+        try { state = JSON.parse(r.text); } catch { /* keep raw text */ }
+        return jsonResult({
+          app,
+          path: str(args.path) || '',
+          component: r.name,
+          truncated: r.cut,
+          state,
+        });
+      }
+
+      case 'set_vue_state': {
+        const app = num(args.app);
+        const section = str(args.section);
+        const key = str(args.key);
+        if (app === undefined || !section || !key) {
+          return errorResult(new Error('需要 app、section（data/setup/vuex/pinia）、key（点路径，pinia 首段为 store id）'));
+        }
+        const setExpr = vueEvalExpr('set', {
+          app,
+          path: str(args.path) || '',
+          section,
+          key,
+          value: args.value,
+        });
+        const result = parseVueEvalResult(
+          await hub.sendCommand('eval', { expression: setExpr }, 30000, opts.sessionId),
+        );
+        if (result.error) {
+          return errorResult(new Error(String(result.error)));
+        }
+        return jsonResult(result);
+      }
 
       case 'get_storage':
         return jsonResult(await hub.sendCommand('get_storage', {}, 30000, opts.sessionId));

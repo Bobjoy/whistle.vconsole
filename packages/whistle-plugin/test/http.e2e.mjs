@@ -59,8 +59,25 @@ function makeProbe(sessionId, url, title, deviceName = 'http-e2e-phone', protoco
   ws.on('message', (raw) => {
     const msg = JSON.parse(raw.toString());
     if (msg.type !== 'cmd') { return; }
+    // the get_vue_* tools carry the panel's vue serializer through `eval`;
+    // answer per-op so the hub-side chunk/pagination glue is exercised
+    let evalAnswer = { result: '42', isException: false, durationMs: 1 };
+    if (msg.cmd === 'eval') {
+      const expr = (msg.args && msg.args.expression) || '';
+      if (expr.indexOf('__vcVue') > -1) {
+        if (expr.indexOf('"apps"') > -1) {
+          evalAnswer = { result: JSON.stringify({ apps: [{ i: 0, v: 3, name: 'FakeApp', tag: 'div', container: 'div#app', readable: true }] }), isException: false, durationMs: 1 };
+        } else if (expr.indexOf('"tree"') > -1) {
+          evalAnswer = { result: JSON.stringify({ total: 1, offset: 0, ch: [{ n: 'FakeChild', tag: 'span', cc: 0 }], next: null }), isException: false, durationMs: 1 };
+        } else if (expr.indexOf('"state"') > -1) {
+          evalAnswer = { result: JSON.stringify({ name: 'FakeApp', len: 13, cut: false, s0: '{"props":{}}' }), isException: false, durationMs: 1 };
+        } else if (expr.indexOf('"set"') > -1) {
+          evalAnswer = { result: JSON.stringify({ ok: true, key: 'x', value: 1 }), isException: false, durationMs: 1 };
+        }
+      }
+    }
     const answers = {
-      eval: { result: '42', isException: false, durationMs: 1 },
+      eval: evalAnswer,
       get_dom: { found: true, outerHtml: `<body>${title}</body>`, matchedCount: 1 },
       get_storage: { cookies: [], localStorage: [{ key: 'from', value: sessionId }], sessionStorage: [] },
       page_info: { url, title, referrer: '', userAgent: 'e2e-http', platform: 'test', language: 'zh', viewport: { width: 390, height: 844 }, memory: { usedJSHeapSize: 1, totalJSHeapSize: 2 } },
@@ -168,6 +185,21 @@ async function main() {
   // 5. command tools target their session
   r = await client.callTool({ name: 'eval_js', arguments: { sessionId: 'dev-a', expression: '1+1' } });
   check('eval_js targets dev-a', JSON.parse(text(r)).result === '42' && aEvals >= 1, text(r));
+
+  // get_vue_* carry the panel's serializer through the plain `eval` command —
+  // zero protocol change, so the fake probe answers per-op and the hub-side
+  // glue (envelope unwrap, JSON parse, chunk loop) is what these assert
+  r = await client.callTool({ name: 'get_vue_tree', arguments: {} });
+  check('get_vue_tree lists apps (eval-carried serializer)',
+    JSON.parse(text(r)).apps[0].name === 'FakeApp', text(r));
+  r = await client.callTool({ name: 'get_vue_tree', arguments: { app: 0 } });
+  check('get_vue_tree expands a tree page',
+    JSON.parse(text(r)).ch[0].n === 'FakeChild', text(r));
+  r = await client.callTool({ name: 'get_vue_state', arguments: { app: 0 } });
+  check('get_vue_state returns parsed state (chunk loop hub-side)',
+    JSON.parse(text(r)).component === 'FakeApp' && JSON.parse(text(r)).state.props !== undefined, text(r));
+  r = await client.callTool({ name: 'set_vue_state', arguments: { app: 0, section: 'data', key: 'x', value: 1 } });
+  check('set_vue_state round-trips', JSON.parse(text(r)).ok === true, text(r));
   r = await client.callTool({ name: 'get_page_info', arguments: { sessionId: 'dev-b' } });
   check('get_page_info targets dev-b', JSON.parse(text(r)).url === 'https://example.com/b', text(r));
   r = await client.callTool({ name: 'get_dom', arguments: { sessionId: 'dev-a', selector: 'body' } });
@@ -198,8 +230,9 @@ async function main() {
 
   // 10. replay_request on the HTTP/MCP surface the deployment actually serves
   const tools = await client.listTools();
-  check('13 tools registered over HTTP',
-    tools.tools.length === 13 && tools.tools.some((t) => t.name === 'replay_request'), String(tools.tools.length));
+  check('16 tools registered over HTTP',
+    tools.tools.length === 16 && tools.tools.some((t) => t.name === 'replay_request')
+      && tools.tools.some((t) => t.name === 'get_vue_state'), String(tools.tools.length));
 
   r = await client.callTool({ name: 'replay_request', arguments: { sessionId: 'dev-a', requestId: 'evicted-1' } });
   check('replay_request reports an evicted requestId', r.isError === true && /request not found/.test(text(r)), text(r));

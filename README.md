@@ -5,7 +5,7 @@ whistle vConsole 插件 + MCP server + H5 页面调试探针。面向 AI agent �
 ```
 ┌──────────────┐  MCP (HTTP/stdio) ┌─────────────────────────┐   WebSocket   ┌──────────────────┐
 │  AI Agent    │ ◄───────────────► │ whistle 进程             │ ◄───────────► │ 手机 H5 页面      │
-│ (Claude 等)  │     十三个工具     │ @bobjoy/whistle.vconsole │  探针主动连接  │ @bobjoy/vconsole  │
+│ (Claude 等)  │     十六个工具     │ @bobjoy/whistle.vconsole │  探针主动连接  │ @bobjoy/vconsole  │
 └──────────────┘                   │ hub + /mcp + 设备面板     │               │ 探针（可自动注入） │
                                    └─────────────────────────┘               └──────────────────┘
 ```
@@ -62,7 +62,7 @@ v2 start                                       # 后台守护：hub :9528 + 面�
 
 MCP 客户端用上面那份 http JSON，一字不差（standalone 和插件服务的是同一个 `/mcp`）。
 
-**备选：不想跑后台服务**——裸跑 `v2` 是 stdio MCP（一个客户端会话一个进程，13 个工具一样全，但没有面板也没有 `/probe.js`；同端口上后起的进程会自动转成 proxy 接上第一个 hub，设备仍然共享）：
+**备选：不想跑后台服务**——裸跑 `v2` 是 stdio MCP（一个客户端会话一个进程，16 个工具一样全，但没有面板也没有 `/probe.js`；同端口上后起的进程会自动转成 proxy 接上第一个 hub，设备仍然共享）：
 
 ```json
 {
@@ -175,7 +175,7 @@ export default defineConfig({
 whistle.chii 风格插件，把 **MCP server、设备面板和探针注入一起搬进了 whistle 进程**——`w2 start` 即启动，`w2 stop` 即关闭，不需要单独的 hub node 进程。
 
 - **WS Hub**（:9528）：探针连接点，随 w2 起停。同一个端口兼作静态资源（`GET /html2canvas.min.js`），截图用的 html2canvas 由插件 vendor，探针优先从这个它本来就连得上的源加载——纯内网无 CDN 也能截图
-- **MCP over HTTP**（:9527，stateless Streamable HTTP）：`POST http://127.0.0.1:9527/mcp`，任意支持 http 传输的 MCP 客户端直接接入，13 个工具全量可用，支持 `sessionId` 定向
+- **MCP over HTTP**（:9527，stateless Streamable HTTP）：`POST http://127.0.0.1:9527/mcp`，任意支持 http 传输的 MCP 客户端直接接入，16 个工具全量可用，支持 `sessionId` 定向
 - **面板 UI**（:9527/）：左侧会话列表按**接入顺序**排列（设备标签/URL/在线状态，1s 自动刷新，不因为选中或活动切换而重排），点击会话在右侧 Drawer 打开 vConsole 式调试面板——System / Logs / Network / Storage / Screenshot（执行 JS 的输入框在 Logs 页底部），与 MCP 工具共用同一套实现；Network 详情区带「原样再发一次」，非幂等方法会先弹一次确认；按需求**不含 element 面板**
 - **探针资源**（:9527/inject.html、:9527/probe.js）：供插件规则注入使用
 
@@ -237,7 +237,7 @@ MCP 客户端的两种接法，一份可以直接粘的配置（`<workspace>` �
 git clone --recursive <本仓库>   # 探针是 submodule，漏了 --recursive 就 `git submodule update --init`
 pnpm install
 pnpm build          # 构建全部包（含 packages/vconsole）
-pnpm test:e2e       # 回归 193 项：stdio 50 + 多会话 11 + MCP-over-HTTP 50 + `v2` CLI 进程面 82（start/stop/status/logs、端口共存、发布面）
+pnpm test:e2e       # 回归 202 项：stdio 50 + 多会话 11 + MCP-over-HTTP 59 + `v2` CLI 进程面 82（start/stop/status/logs、端口共存、发布面）
 pnpm demo           # 启动演示页 http://localhost:9443
 ```
 
