@@ -45,11 +45,14 @@
           items.value.push({ title: '任务 ' + (items.value.length + 1), done: false });
           console.log('[vue] added task', { count: items.value.length });
         };
-        return { items: items, addOne: addOne };
+        var doneCount = Vue.computed(function () {
+          return items.value.filter(function (it) { return it.done; }).length;
+        });
+        return { items: items, addOne: addOne, doneCount: doneCount };
       },
       template:
         '<div><h3>{{ title }}</h3><ul><todo-item v-for="(it, i) in items" :key="i" :item="it"></todo-item></ul>' +
-        '<button @click="addOne">加一个任务</button></div>',
+        '<p>已完成 {{ doneCount }} 项</p><button @click="addOne">加一个任务</button></div>',
     };
 
     Vue.createApp({

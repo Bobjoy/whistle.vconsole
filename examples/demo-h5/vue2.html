@@ -43,6 +43,11 @@
       data: function () {
         return { items: this.initial.slice() };
       },
+      computed: {
+        doneCount: function () {
+          return this.items.filter(function (it) { return it.done; }).length;
+        },
+      },
       methods: {
         addOne: function () {
           this.items.push({ title: '任务 ' + (this.items.length + 1), done: false });
@@ -51,7 +56,7 @@
       },
       template:
         '<div><h3>{{ title }}</h3><ul><todo-item v-for="(it, i) in items" :key="i" :item="it"></todo-item></ul>' +
-        '<button @click="addOne">加一个任务</button></div>',
+        '<p>已完成 {{ doneCount }} 项</p><button @click="addOne">加一个任务</button></div>',
     };
 
     new Vue({

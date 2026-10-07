@@ -159,6 +159,10 @@ module.exports = function buildPanelHtml() {
   #vue-body { flex: 1; overflow: auto; min-height: 0; }
   #vue-detail { display: none; flex: none; max-height: 45%; overflow: auto; border-top: 1px solid #e5e6eb; padding-top: 8px; }
   #vue-detail.on { display: block; }
+  #vue-edit { display: none; margin: 0 2px 8px; }
+  #vue-edit.on { display: block; }
+  #vue-edit input, #vue-edit textarea { width: 100%; box-sizing: border-box; font-size: 12px; font-family: ui-monospace, Menlo, monospace; padding: 4px 8px; border: 1px solid #165dff; border-radius: 6px; }
+  #vue-edit textarea { min-height: 48px; margin-top: 6px; resize: vertical; }
 </style>
 </head>
 <body>
@@ -235,7 +239,12 @@ module.exports = function buildPanelHtml() {
       <div class="toolbar"><button onclick="loadVueRoot()">刷新</button><span class="muted" style="font-size:12px">Vue 3 组件树与状态（eval_js 实时采集，生产页面可用）</span><span class="lv-error" id="vue-msg"></span><span class="spin" id="vue-spin"></span></div>
       <div id="vue-body"></div>
       <div id="vue-detail">
-        <div class="toolbar"><b style="font-size:12px" id="vue-detail-title"></b><button class="cpy" onclick="copyVueState(this)">复制</button><button onclick="closeVueDetail()">关闭</button></div>
+        <div class="toolbar"><b style="font-size:12px" id="vue-detail-title"></b><button class="cpy" onclick="copyVueState(this)">复制</button><button onclick="toggleVueEdit()">编辑</button><button onclick="closeVueDetail()">关闭</button></div>
+        <div id="vue-edit">
+          <input id="vue-edit-path" placeholder="写入路径：data.appTitle 或 setup.form.name（区段只能是 data/setup）">
+          <textarea id="vue-edit-value" placeholder='JSON 值，如 "新标题" / 42 / {"a":1}；非 JSON 按纯文本写入'></textarea>
+          <div class="toolbar"><button onclick="writeVueState()">写入</button><button onclick="toggleVueEdit()">取消</button><span class="muted" style="font-size:12px" id="vue-edit-msg"></span></div>
+        </div>
         <pre class="raw" id="vue-detail-pre"></pre>
       </div>
     </div>
@@ -959,6 +968,8 @@ module.exports = function buildPanelHtml() {
   let vueApps = null;
   let vueSelected = null;
   let vueDetailText = '';
+  let vueDetailPath = null;
+  let lastVueRefresh = 0;
 
   function vueSnippet(op, arg) {
     var W = window;
@@ -1095,12 +1106,72 @@ module.exports = function buildPanelHtml() {
           }
           return String(v).slice(0, 60);
         },
+        computedOf3: function (inst) {
+          // options-API computed; setup computeds already surface (unwrapped)
+          // in the setup section. Values are read off the public proxy.
+          var defs = inst.computed;
+          if (!defs || !Object.keys(defs).length) { return null; }
+          var o = {};
+          var ks = Object.keys(defs);
+          for (var i = 0; i < Math.min(ks.length, 20); i++) {
+            try { o[ks[i]] = E.val(inst.proxy[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
+          }
+          return o;
+        },
+        computedOf2: function (vm) {
+          var defs = vm.$options && vm.$options.computed;
+          if (!defs || !Object.keys(defs).length) { return null; }
+          var o = {};
+          var ks = Object.keys(defs);
+          for (var i = 0; i < Math.min(ks.length, 20); i++) {
+            try { o[ks[i]] = E.val(vm[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
+          }
+          return o;
+        },
+        routeOf: function (proxyLike) {
+          try {
+            var r = proxyLike && proxyLike.$route;
+            if (!r) { return null; }
+            return {
+              fullPath: r.fullPath,
+              name: r.name === undefined ? null : r.name,
+              params: E.val(r.params, 1),
+              query: E.val(r.query, 1),
+            };
+          } catch (e) { return null; }
+        },
+        piniaOf: function (inst) {
+          try {
+            var gp = inst.appContext && inst.appContext.config && inst.appContext.config.globalProperties;
+            var pinia = gp && gp.$pinia;
+            if (pinia && pinia._s && pinia._s.size) {
+              var out = {};
+              pinia._s.forEach(function (store, id) { out[id] = E.grabObj(store.$state || store); });
+              return out;
+            }
+          } catch (e) { /* not installed */ }
+          return null;
+        },
         stateOf: function (inst) {
-          return { props: E.grabObj(inst.props), setup: E.grabObj(inst.setupState), data: E.grabObj(inst.data) };
+          return {
+            props: E.grabObj(inst.props),
+            setup: E.grabObj(inst.setupState),
+            data: E.grabObj(inst.data),
+            computed: E.computedOf3(inst),
+            route: E.routeOf(inst.proxy),
+            pinia: E.piniaOf(inst),
+          };
         },
         // Vue 2.7's composition API keeps setup state on _setupState when present
         stateOf2: function (vm) {
-          return { props: E.grabObj(vm.$props), data: E.grabObj(vm._data), setup: E.grabObj(vm._setupState) };
+          return {
+            props: E.grabObj(vm.$props),
+            setup: E.grabObj(vm._setupState),
+            data: E.grabObj(vm._data),
+            computed: E.computedOf2(vm),
+            route: E.routeOf(vm),
+            pinia: null,
+          };
         },
       };
     }
@@ -1179,6 +1250,33 @@ module.exports = function buildPanelHtml() {
     }
     if (op === 'sslice') {
       return JSON.stringify({ s: String(W.__vcVueState || '').slice(arg.i, arg.i + 1800) });
+    }
+    if (op === 'set') {
+      // state writeback, devtools-style: dot path relative to a state section
+      // (data.items.0.done / setup.form.name). props/computed are rejected —
+      // they flow from parents or derivations, writing them is a lie.
+      var entry3 = (W.__vcVueApps || [])[arg.app];
+      if (!entry3) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+      var inst3 = entry3.v === 3
+        ? (arg.path ? E.resolveInst(entry3.app, arg.path) : E.rootInst(entry3.app, entry3.container))
+        : E.resolve2(entry3.vm, arg.path || '');
+      if (!inst3) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
+      if (arg.section !== 'data' && arg.section !== 'setup') {
+        return JSON.stringify({ error: '只能写 data 或 setup（props/computed 不可写）' });
+      }
+      var target = entry3.v === 3
+        ? (arg.section === 'data' ? inst3.data : inst3.setupState)
+        : (arg.section === 'data' ? (inst3._data || inst3.$data) : inst3._setupState);
+      if (!target) { return JSON.stringify({ error: '该组件没有 ' + arg.section + ' 状态' }); }
+      var segs2 = String(arg.key || '').split('.');
+      var cur = target;
+      for (var si = 0; si < segs2.length - 1; si++) {
+        try { cur = cur[segs2[si]]; } catch (e) { return JSON.stringify({ error: '路径不可读: ' + segs2[si] }); }
+        if (!cur || typeof cur !== 'object') { return JSON.stringify({ error: '路径中间不是对象: ' + segs2[si] }); }
+      }
+      var lastKey = segs2[segs2.length - 1];
+      try { cur[lastKey] = arg.value; } catch (e) { return JSON.stringify({ error: '写入失败: ' + e.message }); }
+      return JSON.stringify({ ok: true, key: arg.key, value: E.val(arg.value, 1) });
     }
     return JSON.stringify({ error: 'unknown op' });
   }
@@ -1285,32 +1383,98 @@ module.exports = function buildPanelHtml() {
     renderVue();
   }
 
+  async function fetchVueState(path) {
+    const parts = path.split('.');
+    const head = await runVueSnippet('state', { app: Number(parts[0]), path: parts.slice(1).join('.') });
+    if (head.error) { throw new Error(head.error); }
+    let text = head.s0 || '';
+    for (let i = 1800; i < head.len; i += 1800) {
+      const r = await runVueSnippet('sslice', { i });
+      text += r.s;
+    }
+    return { name: head.name, text, cut: head.cut };
+  }
+
   async function selectVue(path) {
     vueSelected = path;
     const n = vueNodes[path];
     renderVue();
+    vueDetailPath = path;
+    document.getElementById('vue-edit').classList.remove('on');
     document.getElementById('vue-detail').classList.add('on');
     document.getElementById('vue-detail-title').textContent = (n ? n.n : '?') + ' 组件状态';
     document.getElementById('vue-detail-pre').textContent = 'loading…';
     try {
-      const parts = path.split('.');
-      const head = await runVueSnippet('state', { app: Number(parts[0]), path: parts.slice(1).join('.') });
-      if (head.error) { throw new Error(head.error); }
-      let text = head.s0 || '';
-      for (let i = 1800; i < head.len; i += 1800) {
-        const r = await runVueSnippet('sslice', { i });
-        text += r.s;
-      }
-      vueDetailText = text;
-      document.getElementById('vue-detail-pre').textContent = text + (head.cut ? '\\n…[已截断：状态文本超过 20000 字符]' : '');
+      const r = await fetchVueState(path);
+      vueDetailText = r.text;
+      document.getElementById('vue-detail-pre').textContent = r.text + (r.cut ? '\\n…[已截断：状态文本超过 20000 字符]' : '');
     } catch (e) {
       document.getElementById('vue-detail-pre').textContent = '加载失败: ' + e.message;
     }
   }
 
+  function toggleVueEdit() {
+    const box = document.getElementById('vue-edit');
+    if (box.classList.toggle('on')) {
+      document.getElementById('vue-edit-msg').textContent = '';
+      document.getElementById('vue-edit-path').value = '';
+      document.getElementById('vue-edit-value').value = '';
+      document.getElementById('vue-edit-path').focus();
+    }
+  }
+
+  async function writeVueState() {
+    const pathStr = document.getElementById('vue-edit-path').value.trim();
+    const rawVal = document.getElementById('vue-edit-value').value;
+    const msg = document.getElementById('vue-edit-msg');
+    const dot = pathStr.indexOf('.');
+    if (dot < 0) { msg.textContent = '路径需要带区段前缀，如 data.appTitle'; return; }
+    const section = pathStr.slice(0, dot);
+    const key = pathStr.slice(dot + 1);
+    if (section !== 'data' && section !== 'setup') { msg.textContent = '区段只能是 data 或 setup'; return; }
+    let value;
+    try { value = JSON.parse(rawVal); } catch (e) { value = rawVal; }
+    msg.textContent = '写入中…';
+    try {
+      const parts = vueDetailPath.split('.');
+      const r = await runVueSnippet('set', { app: Number(parts[0]), path: parts.slice(1).join('.'), section, key, value });
+      if (r.error) { throw new Error(r.error); }
+      msg.textContent = '已写入 ' + r.key;
+      lastVueRefresh = Date.now();
+      await refreshVueState();
+    } catch (e) {
+      msg.textContent = '写入失败: ' + e.message;
+    }
+  }
+
+  // SSE-driven auto refresh: while the Vue pane is visible with a detail open,
+  // page activity hints state may have moved — re-read it (throttled), and
+  // only touch the pre when the serialized state actually changed
+  async function refreshVueState() {
+    try {
+      const r = await fetchVueState(vueDetailPath);
+      if (r.text !== vueDetailText) {
+        vueDetailText = r.text;
+        document.getElementById('vue-detail-pre').textContent = r.text + (r.cut ? '\\n…[已截断：状态文本超过 20000 字符]' : '');
+      }
+    } catch (e) { /* stale session or transient — the next tick retries */ }
+  }
+
+  function maybeRefreshVue() {
+    if (!current || !vueDetailPath) { return; }
+    if (!document.getElementById('pane-vue').classList.contains('on')) { return; }
+    if (document.getElementById('vue-edit').classList.contains('on')) { return; } // never clobber an open editor
+    const now = Date.now();
+    if (now - lastVueRefresh < 3000) { return; }
+    lastVueRefresh = now;
+    refreshVueState();
+  }
+
   function closeVueDetail() {
     document.getElementById('vue-detail').classList.remove('on');
+    document.getElementById('vue-edit').classList.remove('on');
     vueDetailText = '';
+    vueDetailPath = null;
   }
 
   function copyVueState(btn) { copyText(vueDetailText, btn); }
@@ -1498,9 +1662,11 @@ module.exports = function buildPanelHtml() {
         // logs: always live (SSE). network: only while its pane is visible.
         // storage: page activity hints at possible writes — refresh it too
         // (throttled, skipped mid-edit); the manual button covers silent writes.
+        // vue: same hint-driven throttled refresh for an open state detail.
         if (hit.kinds.indexOf('logs') > -1) { loadLogs(); }
         if (hit.kinds.indexOf('network') > -1 && document.getElementById('pane-network').classList.contains('on')) { loadNetwork(); }
         if (hit.kinds.indexOf('logs') > -1 || hit.kinds.indexOf('network') > -1) { maybeRefreshStorage(); }
+        maybeRefreshVue();
       }
     };
   } catch (e) { /* no EventSource: the poller below handles everything */ }
