@@ -17,6 +17,7 @@
   <p><a href="/">← 返回 vanilla demo</a></p>
 
   <script src="/vue.global.js"></script>
+  <script src="/vuex4.global.prod.js"></script>
   <script src="/vconsole.min.js"></script>
   <script>
     var qs = new URLSearchParams(location.search);
@@ -52,8 +53,24 @@
       },
       template:
         '<div><h3>{{ title }}</h3><ul><todo-item v-for="(it, i) in items" :key="i" :item="it"></todo-item></ul>' +
-        '<p>已完成 {{ doneCount }} 项</p><button @click="addOne">加一个任务</button></div>',
+        '<p>已完成 {{ doneCount }} 项 · <button @click="$store.commit(\'bump\')">{{ $store.getters.label }}</button></p></div>',
     };
+
+    var store = Vuex.createStore({
+      state: function () {
+        return { serverName: '演示环境 A', calls: 0 };
+      },
+      getters: {
+        label: function (state) {
+          return state.serverName + ' · ' + state.calls + ' 次调用';
+        },
+      },
+      mutations: {
+        bump: function (state) {
+          state.calls++;
+        },
+      },
+    });
 
     Vue.createApp({
       name: 'VueDemoApp',
@@ -64,7 +81,7 @@
       template:
         '<div><h1>{{ appTitle }}</h1><p>页面加载于 {{ loadTime }}</p>' +
         '<todo-list title="今日待办" :initial="[{ title: \'接入手探针\', done: true }, { title: \'看组件状态\', done: false }]"></todo-list></div>',
-    }).mount('#app');
+    }).use(store).mount('#app');
   </script>
 </body>
 </html>

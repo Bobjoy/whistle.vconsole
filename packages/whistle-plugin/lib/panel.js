@@ -1043,14 +1043,33 @@ module.exports = function buildPanelHtml() {
           }
           return inst;
         },
-        grabObj: function (obj) {
+        grabObj: function (obj, depth) {
           if (!obj || typeof obj !== 'object') { return null; }
           var o = {};
           var ks = Object.keys(obj);
           for (var i = 0; i < Math.min(ks.length, 30); i++) {
-            try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], 2); } catch (e) { o[ks[i]] = '[unreadable]'; }
+            try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], depth === undefined ? 2 : depth); } catch (e) { o[ks[i]] = '[unreadable]'; }
           }
           return o;
+        },
+        vuexOf: function (proxyLike) {
+          try {
+            var store = proxyLike && proxyLike.$store;
+            if (!store || !store.state) { return null; }
+            return {
+              state: E.grabObj(store.state, 3),
+              getters: (function () {
+                var g = store.getters;
+                if (!g) { return null; }
+                var o = {};
+                var ks = Object.keys(g);
+                for (var i = 0; i < Math.min(ks.length, 20); i++) {
+                  try { o[ks[i]] = E.val(g[ks[i]], 1); } catch (e) { o[ks[i]] = '[error]'; }
+                }
+                return o;
+              })(),
+            };
+          } catch (e) { return null; }
         },
         rootInst: function (app, el) {
           // prod builds never assign app._instance (verified on 3.5.13: only
@@ -1160,6 +1179,7 @@ module.exports = function buildPanelHtml() {
             computed: E.computedOf3(inst),
             route: E.routeOf(inst.proxy),
             pinia: E.piniaOf(inst),
+            vuex: E.vuexOf(inst.proxy),
           };
         },
         // Vue 2.7's composition API keeps setup state on _setupState when present
@@ -1171,6 +1191,7 @@ module.exports = function buildPanelHtml() {
             computed: E.computedOf2(vm),
             route: E.routeOf(vm),
             pinia: null,
+            vuex: E.vuexOf(vm),
           };
         },
       };

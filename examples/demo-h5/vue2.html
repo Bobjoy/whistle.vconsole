@@ -17,6 +17,7 @@
   <p><a href="/">← 返回 vanilla demo</a> · <a href="/vue.html">Vue 3 demo</a></p>
 
   <script src="/vue2.global.min.js"></script>
+  <script src="/vuex3.global.min.js"></script>
   <script src="/vconsole.min.js"></script>
   <script>
     var qs = new URLSearchParams(location.search);
@@ -56,12 +57,27 @@
       },
       template:
         '<div><h3>{{ title }}</h3><ul><todo-item v-for="(it, i) in items" :key="i" :item="it"></todo-item></ul>' +
-        '<p>已完成 {{ doneCount }} 项</p><button @click="addOne">加一个任务</button></div>',
+        '<p>已完成 {{ doneCount }} 项 · <button @click="$store.commit(\'bump\')">{{ $store.getters.label }}</button></p></div>',
     };
+
+    var store = new Vuex.Store({
+      state: { serverName: '演示环境 A', calls: 0 },
+      getters: {
+        label: function (state) {
+          return state.serverName + ' · ' + state.calls + ' 次调用';
+        },
+      },
+      mutations: {
+        bump: function (state) {
+          state.calls++;
+        },
+      },
+    });
 
     new Vue({
       name: 'Vue2DemoApp',
       el: '#app',
+      store: store,
       data: { appTitle: 'Vue 2 调试演示页', loadTime: new Date().toLocaleTimeString() },
       components: { 'todo-list': TodoList },
       template:
