@@ -46,7 +46,7 @@ MCP 客户端（ZCode / Claude / Cursor 等）配 http 接入：
 }
 ```
 
-（设备面板 `http://127.0.0.1:9527/` 右上角「MCP配置」里就是这份完整 JSON，按当前访问的 host 实时生成，可直接粘。）
+（设备面板 `http://127.0.0.1:9527/` 右上角「MCP配置」里就是这份完整 JSON，按当前访问的 host 实时生成，点「复制」直接进剪贴板。）
 
 whistle 是**按需 fork 插件进程**的：`w2 start` 之后要先在 whistle 的 Plugins 菜单点一次 `vconsole`（或让一条命中规则的页面过代理），:9527/:9528 才真正起来——在那之前 `v2 status` 会如实报 `stopped`。
 

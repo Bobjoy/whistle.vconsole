@@ -272,6 +272,16 @@ async function main() {
     /askFirst && !window\.confirm/.test(panelHtml) && panelHtml.indexOf('重放自') > -1);
   check('panel: device card renders the protocol mismatch line',
     /s\.protocolMismatch/.test(panelHtml) && panelHtml.indexOf('协议') > -1);
+  // copy affordances: the helper must carry the plain-http execCommand fallback
+  // (the panel is routinely opened over LAN http, where navigator.clipboard
+  // does not exist), and every entry point must be wired
+  check('panel: copy helper falls back to execCommand on insecure contexts',
+    /navigator\.clipboard && window\.isSecureContext/.test(panelHtml)
+    && panelHtml.indexOf("document.execCommand('copy')") > -1);
+  check('panel: copy entries wired (card url / logs / cURL / detail fields / MCP config)',
+    panelHtml.indexOf('copyCardUrl(this, event)') > -1 && panelHtml.indexOf('copyLogs(this)') > -1
+    && panelHtml.indexOf('复制为cURL') > -1 && panelHtml.indexOf('copyDetailField') > -1
+    && panelHtml.indexOf('copyMcp(this)') > -1 && panelHtml.indexOf('copyInfo(this)') > -1);
   // the panel html is a build-time template literal: a `\` in it is eaten before
   // the browser sees the script, so a substring match can pass on broken code.
   // Parse the emitted script instead — that is the only check that catches it.

@@ -106,6 +106,13 @@ module.exports = function buildPanelHtml() {
   .muted { color: #86909c; }
   .spin { color: #86909c; font-size: 12px; }
 
+  /* copy buttons: inline mini buttons wherever copyable content lives */
+  button.cpy { font-size: 11px; padding: 1px 8px; border: 1px solid #e5e6eb; border-radius: 6px; background: #fff; color: #4e5969; cursor: pointer; flex: none; }
+  button.cpy:hover { border-color: #165dff; color: #165dff; }
+  .card .row1 .cpy { margin-left: auto; }
+  details.hsec > summary .cpy { margin-left: auto; }
+  #mcp-help .cpy { margin-left: 8px; }
+
   /* DevTools-style detail sections: collapsible header + 原始 toggle + name/value table */
   details.hsec { border: 1px solid #e5e6eb; border-radius: 6px; margin: 8px 0; overflow: hidden; }
   details.hsec > summary { list-style: none; cursor: pointer; padding: 6px 10px; background: #fafbfc; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; user-select: none; }
@@ -137,7 +144,7 @@ module.exports = function buildPanelHtml() {
       <h1>设备列表</h1>
       <span id="hub">connecting…</span>
       <details id="mcp-help">
-        <summary>MCP配置</summary>
+        <summary>MCP配置<button class="cpy" onclick="copyMcp(this)">复制</button></summary>
         <pre id="mcp-conf"></pre>
       </details>
     </header>
@@ -157,13 +164,14 @@ module.exports = function buildPanelHtml() {
       <button data-t="screenshot">Screenshot</button>
     </div>
     <div class="pane on" id="pane-info">
-      <div class="toolbar"><button onclick="loadInfo()">刷新</button></div>
+      <div class="toolbar"><button onclick="loadInfo()">刷新</button><button onclick="copyInfo(this)">复制</button></div>
       <div id="info-body"></div>
     </div>
     <div class="pane" id="pane-logs">
       <div class="toolbar">
         <select id="log-level"><option value="">all levels</option><option>log</option><option>info</option><option>warn</option><option>error</option><option>debug</option></select>
         <input id="log-kw" placeholder="keyword…" style="width:160px">
+        <button onclick="copyLogs(this)">复制</button>
       </div>
       <div id="logs-body"></div>
       <div id="console">
@@ -205,6 +213,7 @@ module.exports = function buildPanelHtml() {
   ));
   let current = null;
   let lastLogs = null;
+  let lastLogItems = [];
   let lastNet = null;
   let lastCards = '';
   const netCache = {};
@@ -214,6 +223,51 @@ module.exports = function buildPanelHtml() {
   // in its own URL; on the dev machine (loopback) there is nothing to carry
   const T = new URLSearchParams(location.search).get('t') || '';
   const TQ = T ? '?t=' + encodeURIComponent(T) : '';
+
+  const MCP_CONF = JSON.stringify({
+    mcpServers: { vconsole: { type: 'http', url: 'http://' + location.host + '/mcp' + TQ } },
+  }, null, 2);
+
+  function flashBtn(btn, text) {
+    const old = btn.textContent;
+    btn.textContent = text;
+    clearTimeout(btn._cpyT);
+    btn._cpyT = setTimeout(() => { btn.textContent = old; }, 1200);
+  }
+
+  // The panel is routinely opened over LAN http, where the async clipboard API
+  // does not exist (secure-context only) — fall back to the hidden-textarea +
+  // execCommand dance, which still works in plain http. btn gets "已复制" feedback.
+  async function copyText(text, btn) {
+    text = String(text == null ? '' : text);
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch (e) { /* fall through to the legacy path */ }
+    if (!ok) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+    }
+    if (btn) { flashBtn(btn, ok ? '已复制' : '复制失败'); }
+    return ok;
+  }
+
+  function copyMcp(btn) { copyText(MCP_CONF, btn); }
+
+  // lives on the session card; stopPropagation keeps the drawer from opening
+  function copyCardUrl(btn, ev) {
+    ev.stopPropagation();
+    copyText(btn.dataset.url, btn);
+  }
 
   async function api(name, args, sessionId) {
     const r = await fetch('/api/tool' + TQ, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -261,6 +315,7 @@ module.exports = function buildPanelHtml() {
         '<span class="dev">' + esc(label) + '</span>' +
         muted +
         proto +
+        (s.url ? '<button class="cpy" data-url="' + esc(s.url) + '" onclick="copyCardUrl(this, event)">复制URL</button>' : '') +
         '</div>' +
         '<div class="row2" title="' + esc(s.url) + '">' + esc(s.title || '') + ' — ' + esc(s.url || '') + '</div>' +
         '<div class="row3">' + esc(s.viewport ? s.viewport.width + '×' + s.viewport.height + ' @' + s.viewport.dpr : '') +
@@ -314,6 +369,7 @@ module.exports = function buildPanelHtml() {
     try {
       const d = await api('get_logs', { level: document.getElementById('log-level').value || undefined,
         keyword: document.getElementById('log-kw').value || undefined, limit: 200 }, current);
+      lastLogItems = d.items || [];
       const html = d.items.map((it) =>
         '<div class="logline"><span class="logmeta">' + new Date(it.date).toLocaleTimeString() + ' <b class="lv-' + it.type + '">' + it.type + '</b>' +
         (it.repeated ? ' ×' + (it.repeated + 1) : '') + '</span>' + esc(it.args.join(' ')) + '</div>'
@@ -329,8 +385,23 @@ module.exports = function buildPanelHtml() {
       }
     } catch (e) {
       lastLogs = null;
+      lastLogItems = [];
       box.innerHTML = '<span class="lv-error">' + esc(e.message) + '</span>';
     }
+  }
+
+  // copies exactly what the filtered view shows, in a paste-friendly text form;
+  // a repeated log is expanded to its real count (the ×n on screen means n+1)
+  function formatLogs(items) {
+    return items.map((it) =>
+      '[' + new Date(it.date).toLocaleTimeString() + '] [' + it.type + '] ' +
+      it.args.join(' ') + (it.repeated ? ' (×' + (it.repeated + 1) + ')' : '')
+    ).join('\\n');
+  }
+
+  function copyLogs(btn) {
+    if (!lastLogItems.length) { flashBtn(btn, '无日志'); return; }
+    copyText(formatLogs(lastLogItems), btn);
   }
 
   let netFilterTimer = null;
@@ -431,12 +502,14 @@ module.exports = function buildPanelHtml() {
     const d = openDetailData;
     if (!d) { return ''; }
     return '<p style="margin:0 0 8px" class="muted">' + esc(d.requestType || '') +
-        (d.replayedFrom ? ' · 重放自 ' + esc(d.replayedFrom) : '') + '</p>' +
+        (d.replayedFrom ? ' · 重放自 ' + esc(d.replayedFrom) : '') +
+        '<span style="float:right"><button class="cpy" onclick="copyNetUrl(this)">复制URL</button> ' +
+        '<button class="cpy" onclick="copyCurl(this)">复制为cURL</button></span></p>' +
       querySection(d.url) +
-      headerSection('请求标头', d.requestHeader) +
-      headerSection('响应标头', d.responseHeader) +
-      payloadSection('请求载荷', d.postData) +
-      payloadSection('响应内容', d.response) +
+      headerSection('请求标头', d.requestHeader, 'requestHeader') +
+      headerSection('响应标头', d.responseHeader, 'responseHeader') +
+      payloadSection('请求载荷', d.postData, 'postData') +
+      payloadSection('响应内容', d.response, 'response') +
       replaySection(d) +
       (!d.requestHeader && !d.responseHeader && !d.postData && !d.response ? '<span class="muted">该请求无详细数据（resource 类捕获只有 URL/时序）</span>' : '');
   }
@@ -554,23 +627,59 @@ module.exports = function buildPanelHtml() {
     return pairs;
   }
 
-  function headerSection(title, text) {
+  function headerSection(title, text, field) {
     if (text == null || text === '') { return ''; }
+    const cpy = '<button class="cpy" onclick="copyDetailField(\\'' + field + '\\',this);event.preventDefault()">复制</button>';
     const pairs = parseHeaders(text);
     if (!pairs.length) {
-      return '<details class="hsec" open><summary>' + title + '</summary>' +
+      return '<details class="hsec" open><summary>' + title + cpy + '</summary>' +
         '<pre class="raw">' + esc(String(text)) + '</pre></details>';
     }
     const tbl = '<div class="tbl"><table class="headers"><tbody>' +
       pairs.map((kv) => '<tr><th>' + esc(kv[0]) + '</th><td>' + esc(kv[1]) + '</td></tr>').join('') +
       '</tbody></table></div>';
-    return '<details class="hsec" open><summary>' + title + '</summary>' + tbl + '</details>';
+    return '<details class="hsec" open><summary>' + title + cpy + '</summary>' + tbl + '</details>';
   }
 
-  function payloadSection(title, text) {
+  function payloadSection(title, text, field) {
     if (text == null || text === '') { return ''; }
-    return '<details class="hsec" open><summary>' + title + '</summary>' +
+    return '<details class="hsec" open><summary>' + title +
+      '<button class="cpy" onclick="copyDetailField(\\'' + field + '\\',this);event.preventDefault()">复制</button></summary>' +
       '<pre class="raw">' + esc(String(text)) + '</pre></details>';
+  }
+
+  // --- copy affordances in the network detail ------------------------------
+
+  function copyNetUrl(btn) {
+    if (openDetailData) { copyText(openDetailData.url, btn); }
+  }
+
+  function copyDetailField(field, btn) {
+    if (openDetailData) { copyText(openDetailData[field], btn); }
+  }
+
+  function copyCurl(btn) {
+    if (openDetailData) { copyText(buildCurl(openDetailData), btn); }
+  }
+
+  // POSIX single-quote quoting via split/join, so no escape gymnastics are
+  // needed inside the page template
+  function shellQuote(s) {
+    const q = String.fromCharCode(39);
+    const bs = String.fromCharCode(92);
+    return q + String(s == null ? '' : s).split(q).join(q + bs + q + q) + q;
+  }
+
+  // DevTools-style "copy as cURL": captured headers are what the page actually
+  // passed, body goes as text (the capture only keeps string bodies anyway)
+  function buildCurl(d) {
+    const cont = ' ' + String.fromCharCode(92) + String.fromCharCode(10) + '  ';
+    const lines = ['curl ' + shellQuote(d.url)];
+    const method = String(d.method || 'GET').toUpperCase();
+    if (IDEMPOTENT_METHODS.indexOf(method) < 0) { lines.push('-X ' + method); }
+    for (const kv of parseHeaders(d.requestHeader)) { lines.push('-H ' + shellQuote(kv[0] + ': ' + kv[1])); }
+    if (d.postData != null && d.postData !== '') { lines.push('--data-raw ' + shellQuote(String(d.postData))); }
+    return lines.join(cont);
   }
 
   let stoData = null;
@@ -694,10 +803,13 @@ module.exports = function buildPanelHtml() {
     document.getElementById('shot-spin').textContent = '';
   }
 
+  let lastInfo = null;
+
   async function loadInfo() {
     if (!current) { return; }
     try {
       const d = await api('get_page_info', {}, current);
+      lastInfo = d;
       const row = (k, v) => '<tr><th>' + k + '</th><td>' + esc(v) + '</td></tr>';
       document.getElementById('info-body').innerHTML =
         '<table class="headers"><tbody>' +
@@ -709,8 +821,22 @@ module.exports = function buildPanelHtml() {
         (d.navigation ? row('Timing', 'TTFB ' + d.navigation.ttfbMs + 'ms · DCL ' + d.navigation.domContentLoadedMs + 'ms · load ' + d.navigation.loadMs + 'ms') : '') +
         '</tbody></table>';
     } catch (e) {
+      lastInfo = null;
       document.getElementById('info-body').innerHTML = '<span class="lv-error">' + esc(e.message) + '</span>';
     }
+  }
+
+  // same rows the System table shows, as plain "key: value" lines
+  function copyInfo(btn) {
+    const d = lastInfo;
+    if (!d) { flashBtn(btn, '无数据'); return; }
+    const lines = ['URL: ' + d.url, 'Title: ' + d.title, 'UA: ' + d.userAgent,
+      'Viewport: ' + d.viewport.width + '×' + d.viewport.height + ' @' + d.viewport.dpr,
+      'Screen: ' + d.screen.width + '×' + d.screen.height,
+      'Online: ' + d.online, 'Visibility: ' + d.visibility];
+    if (d.memory) { lines.push('JS Heap: ' + (d.memory.usedJsHeapSize / 1048576).toFixed(1) + ' / ' + (d.memory.totalJsHeapSize / 1048576).toFixed(1) + ' MB'); }
+    if (d.navigation) { lines.push('Timing: TTFB ' + d.navigation.ttfbMs + 'ms · DCL ' + d.navigation.domContentLoadedMs + 'ms · load ' + d.navigation.loadMs + 'ms'); }
+    copyText(lines.join('\\n'), btn);
   }
 
   // live feed (SSE) with polling fallback: /api/events pushes a sessions
@@ -742,9 +868,7 @@ module.exports = function buildPanelHtml() {
     renderSessions();
     if (current) { loadLogs(); }
   }, 1000);
-  document.getElementById('mcp-conf').textContent = JSON.stringify({
-    mcpServers: { vconsole: { type: 'http', url: 'http://' + location.host + '/mcp' + TQ } },
-  }, null, 2);
+  document.getElementById('mcp-conf').textContent = MCP_CONF;
   renderSessions();
 </script>
 </body>
