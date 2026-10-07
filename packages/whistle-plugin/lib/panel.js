@@ -3,13 +3,15 @@
  *
  * Left: session list (from list_sessions, in connection order). Click a
  * session → a right-side drawer with vConsole-style tabs: System / Logs /
- * Network / Element / Storage / Screenshot. The JS console input lives at the
- * bottom of the Logs tab. Everything runs through the same tool backend the
- * MCP clients use, targeted at the selected session.
+ * Network / Element / Vue / Storage / Screenshot. The JS console input lives
+ * at the bottom of the Logs tab. Everything runs through the same tool
+ * backend the MCP clients use, targeted at the selected session.
  *
- * Element is eval-driven: the tab ships a self-contained serializer that runs
- * on the page through eval_js (elementSnippet below), so the DOM tree works
- * against every published probe with zero protocol changes. The on-page
+ * Element and Vue are eval-driven: the tabs ship self-contained serializers
+ * that run on the page through eval_js (elementSnippet / vueSnippet below),
+ * so they work against every published probe with zero protocol changes.
+ * Vue walks __vue_app__ (set unconditionally on mount containers even in
+ * production builds; the devtools hook is dev-only). The on-page
  * vConsole element UI is NOT embedded — it is hard-wired to its in-page
  * svelte stores, and a remote renderer only needs the tool API. (chii made
  * the same call for eruda.)
@@ -151,6 +153,12 @@ module.exports = function buildPanelHtml() {
   .elem-tg { flex: none; width: 12px; color: #86909c; cursor: pointer; }
   .elem-tag { color: #165dff; }
   .elem-x { color: #86909c; overflow: hidden; text-overflow: ellipsis; }
+
+  /* vue tab reuses the elem-* tree rows; only the pane layout is its own */
+  #pane-vue.on { display: flex; flex-direction: column; overflow: hidden; }
+  #vue-body { flex: 1; overflow: auto; min-height: 0; }
+  #vue-detail { display: none; flex: none; max-height: 45%; overflow: auto; border-top: 1px solid #e5e6eb; padding-top: 8px; }
+  #vue-detail.on { display: block; }
 </style>
 </head>
 <body>
@@ -176,6 +184,7 @@ module.exports = function buildPanelHtml() {
       <button data-t="logs">Logs</button>
       <button data-t="network">Network</button>
       <button data-t="element">Element</button>
+      <button data-t="vue">Vue</button>
       <button data-t="storage">Storage</button>
       <button data-t="screenshot">Screenshot</button>
     </div>
@@ -220,6 +229,14 @@ module.exports = function buildPanelHtml() {
       <div id="elem-detail">
         <div class="toolbar"><b style="font-size:12px" id="elem-detail-title"></b><button class="cpy" onclick="copyElemHtml(this)">复制</button><button onclick="closeElemDetail()">关闭</button></div>
         <pre class="raw" id="elem-detail-pre"></pre>
+      </div>
+    </div>
+    <div class="pane" id="pane-vue">
+      <div class="toolbar"><button onclick="loadVueRoot()">刷新</button><span class="muted" style="font-size:12px">Vue 3 组件树与状态（eval_js 实时采集，生产页面可用）</span><span class="lv-error" id="vue-msg"></span><span class="spin" id="vue-spin"></span></div>
+      <div id="vue-body"></div>
+      <div id="vue-detail">
+        <div class="toolbar"><b style="font-size:12px" id="vue-detail-title"></b><button class="cpy" onclick="copyVueState(this)">复制</button><button onclick="closeVueDetail()">关闭</button></div>
+        <pre class="raw" id="vue-detail-pre"></pre>
       </div>
     </div>
     <div class="pane" id="pane-storage">
@@ -362,6 +379,9 @@ module.exports = function buildPanelHtml() {
     detailHtml = null;
     elemNodes = {};
     elemSelected = null;
+    vueNodes = {};
+    vueApps = null;
+    vueSelected = null;
     renderSessions();
     document.getElementById('drawer').classList.add('open');
     document.getElementById('d-sid').textContent = id;
@@ -370,6 +390,8 @@ module.exports = function buildPanelHtml() {
     document.getElementById('shot-body').innerHTML = '<span class="muted">点击"截图"按钮生成</span>';
     document.getElementById('elem-body').innerHTML = '<span class="muted">打开 Element 标签后从页面采集 DOM</span>';
     document.getElementById('elem-detail').classList.remove('on');
+    document.getElementById('vue-body').innerHTML = '<span class="muted">打开 Vue 标签后从页面采集组件树</span>';
+    document.getElementById('vue-detail').classList.remove('on');
     document.getElementById('eval-out').innerHTML = '<span class="muted">在页面全局上下文执行 JS；结果同时出现在页面的 vConsole 面板。</span>';
   }
   function closeDrawer() { current = null; document.getElementById('drawer').classList.remove('open'); renderSessions(); }
@@ -387,6 +409,7 @@ module.exports = function buildPanelHtml() {
       // data is command-on-demand, so re-fetch when entering the tab.
       if (b.dataset.t === 'network') { loadNetwork(); }
       if (b.dataset.t === 'element') { ensureElement(); }
+      if (b.dataset.t === 'vue') { ensureVue(); }
       if (b.dataset.t === 'storage') { loadStorage(); }
       if (b.dataset.t === 'info') { loadInfo(); }
     };
@@ -922,6 +945,343 @@ module.exports = function buildPanelHtml() {
     const p = row.dataset.p;
     if (e.target.closest('.elem-tg')) { await toggleElem(p); return; }
     await selectElem(p);
+  });
+
+  // --- vue tab (eval-driven component tree, Vue 3) -------------------------
+  // Same transport contract as the element tab: responses are display-strings
+  // and serializeOne truncates eval results at 2000 chars, so every op
+  // paginates or chunks under 1800. Detection walks __vue_app__ (assigned
+  // unconditionally on mount containers even in production builds) — the
+  // devtools global hook is dev-only and absent on prod pages. Reads of
+  // reactive state trigger getters, so every key is wrapped in try/catch and
+  // depth/entry/char budgets apply.
+  let vueNodes = {};
+  let vueApps = null;
+  let vueSelected = null;
+  let vueDetailText = '';
+
+  function vueSnippet(op, arg) {
+    var W = window;
+    if (!W.__vcVue) {
+      W.__vcVue = {
+        name: function (inst) {
+          var t = inst && inst.type;
+          return (t && (t.name || t.__name)) || 'Anonymous';
+        },
+        tagOf: function (inst) {
+          try {
+            var el = inst.subTree && inst.subTree.el;
+            return el && el.nodeType === 1 ? el.tagName.toLowerCase() : '';
+          } catch (e) { return ''; }
+        },
+        kids: function (inst) {
+          var out = [];
+          (function walk(v) {
+            if (!v || typeof v !== 'object') { return; }
+            if (v.component) { out.push(v.component); return; }
+            if (v.suspense && v.suspense.activeBranch) { walk(v.suspense.activeBranch); return; }
+            var ch = v.children;
+            if (Array.isArray(ch)) {
+              for (var i = 0; i < ch.length; i++) { walk(ch[i]); }
+            }
+          })(inst.subTree);
+          return out;
+        },
+        findApps: function () {
+          var out = [];
+          var seen = [];
+          function push(app, el) {
+            for (var j = 0; j < seen.length; j++) { if (seen[j] === app) { return; } }
+            seen.push(app);
+            out.push({ app: app, container: el });
+          }
+          var els = document.querySelectorAll('[data-v-app], #app');
+          for (var i = 0; i < els.length; i++) {
+            if (els[i].__vue_app__ && els[i].__vue_app__._instance) { push(els[i].__vue_app__, els[i]); }
+          }
+          if (!out.length) {
+            var all = document.body ? document.body.getElementsByTagName('*') : [];
+            var cap = Math.min(all.length, 400);
+            for (var k = 0; k < cap; k++) {
+              if (all[k].__vue_app__ && all[k].__vue_app__._instance) { push(all[k].__vue_app__, all[k]); }
+            }
+          }
+          return out;
+        },
+        vue2count: function () {
+          var n = 0;
+          var all = document.body ? document.body.getElementsByTagName('*') : [];
+          var cap = Math.min(all.length, 400);
+          for (var i = 0; i < cap; i++) { if (all[i].__vue__) { n++; } }
+          return n;
+        },
+        rootInst: function (app, el) {
+          // prod builds never assign app._instance (verified on 3.5.13: only
+          // unmount reads it); dev builds do, and also tag every patched
+          // element with __vueParentComponent — try both, else unreadable
+          var inst = app._instance;
+          if (!inst && el && el.firstElementChild && el.firstElementChild.__vueParentComponent) {
+            inst = el.firstElementChild.__vueParentComponent;
+          }
+          if (!inst) { return null; }
+          try { while (inst.parent) { inst = inst.parent; } } catch (e) { /* keep what we got */ }
+          return inst;
+        },
+        resolveInst: function (app, path) {
+          var inst = app._instance;
+          if (path) {
+            var segs = path.split('.');
+            for (var i = 0; i < segs.length; i++) {
+              inst = W.__vcVue.kids(inst)[Number(segs[i])];
+              if (!inst) { return null; }
+            }
+          }
+          return inst;
+        },
+        val: function (v, depth) {
+          if (v === null) { return null; }
+          var t = typeof v;
+          if (t === 'string') { return v.length > 120 ? v.slice(0, 120) + '…' : v; }
+          if (t === 'number' || t === 'boolean') { return v; }
+          if (t === 'function') { return '[fn]'; }
+          if (t === 'object') {
+            if (depth <= 0) { return Array.isArray(v) ? '[…' + v.length + ']' : '{…}'; }
+            try {
+              if (v.__v_isRef) { return W.__vcVue.val(v.value, depth); }
+              if (v instanceof Date) { return v.toISOString(); }
+              if (typeof Element !== 'undefined' && v instanceof Element) { return '<' + v.tagName.toLowerCase() + '>'; }
+              if (Array.isArray(v)) {
+                var r = [];
+                var n = Math.min(v.length, 20);
+                for (var i = 0; i < n; i++) { r.push(W.__vcVue.val(v[i], depth - 1)); }
+                if (v.length > 20) { r.push('…+' + (v.length - 20)); }
+                return r;
+              }
+              var o = {};
+              var ks = Object.keys(v);
+              var nk = Math.min(ks.length, 20);
+              for (var j = 0; j < nk; j++) {
+                try { o[ks[j]] = W.__vcVue.val(v[ks[j]], depth - 1); } catch (e) { o[ks[j]] = '[unreadable]'; }
+              }
+              if (ks.length > 20) { o['…'] = '+' + (ks.length - 20); }
+              return o;
+            } catch (e2) { return '[unreadable]'; }
+          }
+          return String(v).slice(0, 60);
+        },
+        stateOf: function (inst) {
+          function grab(obj) {
+            if (!obj || typeof obj !== 'object') { return null; }
+            var o = {};
+            var ks = Object.keys(obj);
+            for (var i = 0; i < Math.min(ks.length, 30); i++) {
+              try { o[ks[i]] = W.__vcVue.val(obj[ks[i]], 2); } catch (e) { o[ks[i]] = '[unreadable]'; }
+            }
+            return o;
+          }
+          return { props: grab(inst.props), setup: grab(inst.setupState), data: grab(inst.data) };
+        },
+      };
+    }
+    var E = W.__vcVue;
+    if (op === 'apps') {
+      var found = E.findApps();
+      var apps = [];
+      for (var i = 0; i < found.length; i++) {
+        var f = found[i];
+        var root = E.rootInst(f.app, f.container);
+        apps.push({
+          i: i,
+          name: root ? E.name(root) : (f.app._instance ? E.name(f.app._instance) : '(unknown)'),
+          tag: root ? E.tagOf(root) : '',
+          container: (f.container.tagName || '').toLowerCase() + (f.container.id ? '#' + f.container.id : ''),
+          readable: !!root,
+        });
+      }
+      W.__vcVueApps = found.map(function (x) { return x.app; });
+      return JSON.stringify({ apps: apps, vue2: found.length === 0 ? E.vue2count() : 0 });
+    }
+    if (op === 'tree') {
+      var list = W.__vcVueApps || [];
+      var app = list[arg.app];
+      if (!app) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+      var inst = E.rootInst(app, app._container);
+      if (arg.path) {
+        inst = E.resolveInst(app, arg.path || '');
+      }
+      if (!inst) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
+      var kids = E.kids(inst);
+      var offset = arg.offset || 0;
+      var end = Math.min(offset + Math.min(arg.limit || 12, 20), kids.length);
+      var out = { total: kids.length, offset: offset, ch: [], next: null };
+      var next = null;
+      for (var j = offset; j < end; j++) {
+        out.ch.push({ n: E.name(kids[j]), tag: E.tagOf(kids[j]), cc: E.kids(kids[j]).length });
+        if (JSON.stringify(out).length > 1800 && out.ch.length > 1) { out.ch.pop(); next = j; break; }
+      }
+      if (next === null && end < kids.length) { next = end; }
+      out.next = next;
+      return JSON.stringify(out);
+    }
+    if (op === 'state') {
+      var list2 = W.__vcVueApps || [];
+      var app2 = list2[arg.app];
+      if (!app2) { return JSON.stringify({ error: 'app not found, 请刷新' }); }
+      var inst2 = E.rootInst(app2, app2._container);
+      if (arg.path) {
+        inst2 = E.resolveInst(app2, arg.path || '');
+      }
+      if (!inst2) { return JSON.stringify({ error: 'instance not found, 请刷新' }); }
+      var text = JSON.stringify(E.stateOf(inst2));
+      var cut = text.length > 20000;
+      W.__vcVueState = cut ? text.slice(0, 20000) : text;
+      return JSON.stringify({ name: E.name(inst2), len: W.__vcVueState.length, cut: cut, s0: W.__vcVueState.slice(0, 1800) });
+    }
+    if (op === 'sslice') {
+      return JSON.stringify({ s: String(W.__vcVueState || '').slice(arg.i, arg.i + 1800) });
+    }
+    return JSON.stringify({ error: 'unknown op' });
+  }
+
+  async function runVueSnippet(op, arg) {
+    const expr = '(' + vueSnippet.toString() + ')(' + JSON.stringify(op) + ',' + JSON.stringify(arg) + ')';
+    const d = await api('eval_js', { expression: expr }, current);
+    if (d.isException) { throw new Error(d.result); }
+    return JSON.parse(d.result);
+  }
+
+  function vueMsg(text) { document.getElementById('vue-msg').textContent = text || ''; }
+
+  async function fetchVueChildren(path) {
+    const node = vueNodes[path];
+    const parts = path.split('.');
+    let offset = 0;
+    for (let guard = 0; guard < 60; guard++) {
+      const r = await runVueSnippet('tree', { app: Number(parts[0]), path: parts.slice(1).join('.'), offset, limit: 12 });
+      if (r.error) { throw new Error(r.error); }
+      for (let j = 0; j < r.ch.length; j++) {
+        const cp = path + '.' + (offset + j);
+        if (!vueNodes[cp]) { vueNodes[cp] = Object.assign({ p: cp, loaded: false, expanded: false, children: [] }, r.ch[j]); }
+        node.children.push(cp);
+      }
+      if (r.next === null || r.next === undefined) { node.cc = node.children.length; return; }
+      offset = r.next;
+    }
+    throw new Error('子组件过多，展开中断');
+  }
+
+  async function ensureVue() {
+    if (vueApps) { renderVue(); return; }
+    await loadVueRoot();
+  }
+
+  async function loadVueRoot() {
+    document.getElementById('vue-spin').textContent = '…';
+    vueMsg('');
+    try {
+      const r = await runVueSnippet('apps', {});
+      vueNodes = {};
+      closeVueDetail();
+      if (!r.apps.length) {
+        vueApps = null;
+        renderVue();
+        document.getElementById('vue-body').innerHTML = r.vue2
+          ? '<span class="muted">检测到 Vue 2 应用，当前版本只支持 Vue 3</span>'
+          : '<span class="muted">未检测到 Vue 3 应用（按 __vue_app__ / [data-v-app] 探测）</span>';
+        return;
+      }
+      vueApps = r.apps;
+      for (const a of r.apps) {
+        vueNodes[String(a.i)] = { p: String(a.i), n: a.name, tag: a.tag, cc: 0, loaded: false, expanded: true, children: [] };
+      }
+      if (!r.apps.some((a) => a.readable)) {
+        renderVue();
+        document.getElementById('vue-body').innerHTML = '<div class="muted" style="padding:8px">检测到 Vue 3 应用（生产构建）。组件树与状态需要开发构建的页面——Vue 只在开发运行时暴露组件实例（vite dev 页面或非 prod 的 Vue 包均可）。</div>';
+        return;
+      }
+      for (const a of r.apps) {
+        if (a.readable) { await fetchVueChildren(String(a.i)); }
+      }
+      renderVue();
+    } catch (e) {
+      vueMsg('采集失败: ' + e.message);
+    }
+    document.getElementById('vue-spin').textContent = '';
+  }
+
+  function vueRowHtml(n, depth) {
+    const toggle = n.cc > 0 ? (n.expanded ? '▾' : '▸') : '·';
+    const tag = n.tag ? '<span class="muted"> &lt;' + esc(n.tag) + '&gt;</span>' : '';
+    return '<div class="elem-row' + (vueSelected === n.p ? ' sel' : '') + '" data-p="' + esc(n.p) + '" style="padding-left:' + (6 + depth * 14) + 'px">' +
+      '<span class="elem-tg" data-act="toggle">' + toggle + '</span>' +
+      '<span><span class="elem-tag">' + esc(n.n || 'Anonymous') + '</span>' + tag + '</span>' +
+      (n.cc > 0 ? '<span class="muted"> (' + n.cc + ')</span>' : '') + '</div>';
+  }
+
+  function renderVue() {
+    const body = document.getElementById('vue-body');
+    if (vueApps === null) { body.innerHTML = '<span class="muted">打开 Vue 标签后从页面采集</span>'; return; }
+    const rows = [];
+    const walk = (path, depth) => {
+      const n = vueNodes[path];
+      if (!n) { return; }
+      rows.push(vueRowHtml(n, depth));
+      if (n.expanded && rows.length < 3000) {
+        for (const cp of (n.children || [])) { walk(cp, depth + 1); }
+      }
+    };
+    for (const a of vueApps) { walk(String(a.i), 0); }
+    body.innerHTML = rows.join('');
+  }
+
+  async function toggleVue(path) {
+    const n = vueNodes[path];
+    if (!n || n.cc === 0) { return; }
+    if (!n.loaded) {
+      document.getElementById('vue-spin').textContent = '…';
+      try { await fetchVueChildren(path); } catch (e) { vueMsg('展开失败: ' + e.message); return; }
+      document.getElementById('vue-spin').textContent = '';
+    }
+    n.expanded = !n.expanded;
+    renderVue();
+  }
+
+  async function selectVue(path) {
+    vueSelected = path;
+    const n = vueNodes[path];
+    renderVue();
+    document.getElementById('vue-detail').classList.add('on');
+    document.getElementById('vue-detail-title').textContent = (n ? n.n : '?') + ' 组件状态';
+    document.getElementById('vue-detail-pre').textContent = 'loading…';
+    try {
+      const parts = path.split('.');
+      const head = await runVueSnippet('state', { app: Number(parts[0]), path: parts.slice(1).join('.') });
+      if (head.error) { throw new Error(head.error); }
+      let text = head.s0 || '';
+      for (let i = 1800; i < head.len; i += 1800) {
+        const r = await runVueSnippet('sslice', { i });
+        text += r.s;
+      }
+      vueDetailText = text;
+      document.getElementById('vue-detail-pre').textContent = text + (head.cut ? '\\n…[已截断：状态文本超过 20000 字符]' : '');
+    } catch (e) {
+      document.getElementById('vue-detail-pre').textContent = '加载失败: ' + e.message;
+    }
+  }
+
+  function closeVueDetail() {
+    document.getElementById('vue-detail').classList.remove('on');
+    vueDetailText = '';
+  }
+
+  function copyVueState(btn) { copyText(vueDetailText, btn); }
+
+  document.getElementById('vue-body').addEventListener('click', async (e) => {
+    const row = e.target.closest('.elem-row');
+    if (!row) { return; }
+    const p = row.dataset.p;
+    if (e.target.closest('.elem-tg')) { await toggleVue(p); return; }
+    await selectVue(p);
   });
 
   let stoData = null;

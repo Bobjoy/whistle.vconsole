@@ -55,6 +55,12 @@ const server = http.createServer((req, res) => {
     res.end(fs.readFileSync(path.join(__dirname, path.basename(page))));
     return;
   }
+  // sibling static assets (e.g. vendored vue.global.prod.js for vue.html)
+  if (/^\/[\w.-]+\.js$/.test(page)) {
+    res.writeHead(200, { 'Content-Type': 'application/javascript' });
+    res.end(fs.readFileSync(path.join(__dirname, path.basename(page))));
+    return;
+  }
 
   res.writeHead(404);
   res.end('not found');
