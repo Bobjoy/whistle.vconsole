@@ -20,7 +20,7 @@
 |----|------|------|------|
 | **@bobjoy/vconsole** | `packages/vconsole`（**git submodule** → `Bobjoy/vConsole`） | 探针本体 + `src/mcp/*` 桥。fork 是探针的唯一源码地，发版从 fork 做 | 无跨仓库协议依赖（自带 `src/mcp/protocol.ts` 副本） |
 | **协议（两份副本）** | Node 侧 `packages/whistle-plugin/src/protocol.ts`；探针侧 fork 的 `src/mcp/protocol.ts` | 跨端消息协议（类型 + 运行时常量/纯函数）。构建期内联进各自 bundle，发布物里不存在；**不发包、也不跨仓库引用**，所以它不再有包名 |
-| **@bobjoy/whistle.vconsole** | `packages/whistle-plugin` | **一个包全部服务**：hub（WS 9528）+ HTTP 面 9527（面板、`/api/tool`、`/api/sessions`、`/api/events` SSE、`/probe.js`、`/inject.html`、`/mcp`）+ daemon（`v2 start/stop/status/logs`）+ 设备面板 UI + MCP 层（tools 定义与 McpServer 工厂）+ whistle 接入（`rules.txt` 注入、插件入口、菜单 redirect）。保持自包含 bundle（`bundleDependencies`），`w2 install <tgz> --offline` 仍能装 | 无跨仓库协议依赖（用 `packages/protocol` 那份内联）；构建期取 @bobjoy/vconsole 的 `dist/vconsole.min.js` |
+| **@bobjoy/whistle.vconsole** | `packages/whistle-plugin` | **一个包全部服务**：hub（WS 9528）+ HTTP 面 9527（面板、`/api/tool`、`/api/sessions`、`/api/events` SSE、`/probe.js`、`/inject.html`、`/mcp`）+ daemon（`v2 start/stop/status/logs`）+ 设备面板 UI + MCP 层（tools 定义与 McpServer 工厂）+ whistle 接入（`rules.txt` 注入、插件入口、菜单 redirect）。保持自包含 bundle（`bundleDependencies`），`w2 install <tgz> --offline` 仍能装 | 无跨仓库协议依赖（`src/protocol.ts` 是包内文件）；构建期取 @bobjoy/vconsole 的 `dist/vconsole.min.js` |
 | **@bobjoy/vconsole-vite** | `packages/vite-plugin` | vite dev 期注入探针 | @bobjoy/vconsole |
 
 - **MCP 不另起进程**：`/mcp` 与 stdio 入口都在同一个进程里，保住「agent 配一条 http URL」和「裸跑 stdio 自带 hub」两条现有能力。

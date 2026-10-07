@@ -61,11 +61,23 @@ fs.writeFileSync(path.join(packDir, 'package.json'), JSON.stringify({
   // tgz installable offline (w2 install runs npm install on it)
   bundleDependencies: RUNTIME_DEPS,
 }, null, 2));
-for (const entry of ['index.js', 'rules.txt', 'lib', 'dist', 'vendor']) {
+for (const entry of ['index.js', 'rules.txt', 'README.md', 'lib', 'dist', 'vendor']) {
   fs.cpSync(path.join(root, entry), path.join(packDir, entry), { recursive: true });
 }
 
 execSync('npm install --omit=dev --no-audit --no-fund --loglevel=error', { cwd: packDir, stdio: 'inherit' });
+
+// npm writes the build machine's registry host verbatim into `resolved`, and both
+// lockfiles ride along in the archive (node_modules is bundled on purpose) — so
+// rewrite every resolved URL to the public registry before packing.
+for (const lock of [
+  path.join(packDir, 'package-lock.json'),
+  path.join(packDir, 'node_modules', '.package-lock.json'),
+]) {
+  if (!fs.existsSync(lock)) continue;
+  const text = fs.readFileSync(lock, 'utf8');
+  fs.writeFileSync(lock, text.replace(/"resolved": "https?:\/\/[^/"]+/g, '"resolved": "https://registry.npmjs.org'));
+}
 
 // Pack manually instead of `npm pack`: the package.json `files` allowlist makes
 // libnpmpack drop node_modules even when bundleDependencies is set. The archive

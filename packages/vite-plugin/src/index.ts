@@ -9,7 +9,7 @@
  *   export default defineConfig({
  *     plugins: [
  *       vconsoleMcp({
- *         serverUrl: 'ws://192.168.x.x:9528',
+ *         serverUrl: 'ws://192.168.x.x:9528?t=<token>',
  *       }),
  *     ],
  *   });

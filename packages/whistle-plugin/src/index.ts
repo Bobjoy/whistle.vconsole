@@ -27,7 +27,7 @@ export type { ToolBackend } from './mcpServer.js';
 export { parseDeviceLabel } from './deviceLabel.js';
 export { PROTOCOL_VERSION } from './protocol.js';
 
-export const VERSION = '0.3.3';
+export const VERSION = '0.3.4';
 
 export interface StartOptions extends Partial<HubConfig> {
   /** log function for diagnostics; MUST NOT write to stdout (default: console.error) */

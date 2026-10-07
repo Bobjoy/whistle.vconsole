@@ -14,11 +14,11 @@ whistle vConsole 插件 + MCP server + H5 页面调试探针。面向 AI agent �
 
 | 包 | 作用 |
 |---|---|
-| `@bobjoy/whistle.vconsole` | whistle 插件（主入口）：随 `w2 start` 起 WS Hub、MCP Streamable HTTP、设备面板，并用插件规则自动给被代理页面注入探针。MCP server 源码就在本包 `src/`；不装 whistle 时用同一个包的 `bin: v2` 起 standalone（`v2 start`，HTTP 面与插件完全同源） |
+| `@bobjoy/whistle.vconsole` | whistle 插件（主入口）：随 `w2 start` 起 WS Hub、MCP Streamable HTTP、设备面板，并用插件规则自动给被代理页面注入探针。MCP server 源码就在本包 `src/`；不装 whistle 时用同一个包的 `bin: v2` 起 standalone（`v2 start`，HTTP 面与插件完全同源）。包级 README 是 `packages/whistle-plugin/README.md`，npm 页面显示的就是它 |
 | `@bobjoy/vconsole` | fork 版 vConsole 探针：面板数据全复用，新增 WebSocket bridge（日志/网络上报 + 命令执行）。**源码不在本仓库**：住在 fork 仓库 [`Bobjoy/vConsole`](https://github.com/Bobjoy/vConsole) 的 `mcp` 分支，本仓库以 git submodule 挂在 `packages/vconsole`；`dev` 分支是 upstream（`Tencent/vConsole`）的纯镜像，只用来同步修复 |
 | `@bobjoy/vconsole-vite` | Vite 插件：dev 模式零侵入自动注入探针 |
 
-两端共享的消息协议**两侧各一份副本、都不发包**：Node 侧是 `packages/whistle-plugin/src/protocol.ts`（插件包的普通源文件，构建时和其他模块一起打进 `dist/*.cjs`），探针侧是 fork 里 `src/mcp/protocol.ts` 供探针侧。副本不是任何包的依赖，而是由探针侧 webpack `resolve.alias` 与插件侧 tsconfig `paths` 直指源码，构建期内联进各自的单文件 bundle，发布物里不存在这个包（探针的 `dist/vconsole.min.d.ts` 会把它拼成同名 ambient module 块，消费者不需要装它）。代价是两份会漂，所以两条护栏：改协议必须同一轮动两处；`PROTOCOL_VERSION` 是唯一的握手号，两端不一致时 hub **只标记不断开**（面板与 `list_sessions` 可见）。
+两端共享的消息协议**两侧各一份副本、都不发包**：Node 侧是 `packages/whistle-plugin/src/protocol.ts`（插件包里的普通源文件，esbuild 和其他模块一起打进 `dist/*.cjs`），探针侧是 fork 里 `src/mcp/protocol.ts`。两份都不是任何包的依赖：插件侧用相对路径直接 import，探针侧的源码写的是 `@bobjoy/vconsole-protocol` 这个名字，由 webpack `resolve.alias` 指回它自己那个本地文件（探针的 `dist/vconsole.min.d.ts` 会把它拼成同名 ambient module 块，消费者不需要装它）。代价是两份会漂，所以两条护栏：改协议必须同一轮动两处；`PROTOCOL_VERSION` 是唯一的握手号，两端不一致时 hub **只标记不断开**（面板与 `list_sessions` 可见）。
 
 ## 快速开始
 
@@ -31,8 +31,8 @@ whistle vConsole 插件 + MCP server + H5 页面调试探针。面向 AI agent �
 **whistle 插件（推荐，全家桶随 w2 起停）**：
 
 ```bash
-pnpm --filter @bobjoy/whistle.vconsole build   # 出包 whistle.vconsole-0.3.0.tgz
-w2 install whistle.vconsole-0.3.0.tgz
+pnpm --filter @bobjoy/whistle.vconsole build   # 仓库根出包，最后一行打印文件名 whistle.vconsole-<版本>.tgz
+w2 install whistle.vconsole-<版本>.tgz          # 就是上一步打印的那个名字
 w2 start                                       # hub :9528 + MCP/面板 :9527
 ```
 
@@ -53,8 +53,7 @@ whistle 是**按需 fork 插件进程**的：`w2 start` 之后要先在 whistle 
 **standalone（不装 whistle，全局 `v2` 命令）**：
 
 ```bash
-pnpm --filter @bobjoy/whistle.vconsole build   # 出包 whistle.vconsole-0.3.0.tgz
-npm i -g ./whistle.vconsole-0.3.0.tgz          # 发到 npm 之后可直接 npm i -g @bobjoy/whistle.vconsole
+npm i -g @bobjoy/whistle.vconsole              # 已发到 npm；验当前代码就装本地包：先 pnpm --filter @bobjoy/whistle.vconsole build，再 npm i -g ./whistle.vconsole-<版本>.tgz
 v2 start                                       # 后台守护：hub :9528 + 面板/MCP :9527
 ```
 
@@ -112,10 +111,10 @@ new VConsole({
 });
 ```
 
-**公网 CDN 外链（页面已发布到公网时）**：探针是单文件 UMD、全局 `VConsole`、依赖已全部打进 bundle，外联可直接用，不需要装包也不需要构建（`@bobjoy/vconsole` 还没发到 npm，这条 URL 现在会 404，发布后即生效）：
+**公网 CDN 外链（页面已发布到公网时）**：探针是单文件 UMD、全局 `VConsole`、依赖已全部打进 bundle，外联可直接用，不需要装包也不需要构建（`@bobjoy/vconsole` 已发到 npm，下面的 unpkg 地址就是现成的）：
 
 ```html
-<script src="https://unpkg.com/@bobjoy/vconsole@3.16.0/dist/vconsole.min.js"></script>
+<script src="https://unpkg.com/@bobjoy/vconsole@3.16.3/dist/vconsole.min.js"></script>
 <script>
   new VConsole({ serverUrl: 'wss://<你的隧道域名>/?t=<token>' });
 </script>
@@ -145,7 +144,7 @@ export default defineConfig({
 
 手机与开发机同网段，浏览器/微信 webview 打开页面即可。探针自动连接 server，agent 调用 `list_sessions` 就能看到设备。
 
-## Agent 工具面（13 个）
+## Agent 工具面（16 个）
 
 | 工具 | 说明 |
 |---|---|
@@ -158,6 +157,9 @@ export default defineConfig({
 | `replay_request` | 把 `get_network` 里的某条记录**原样**再发一次，拿这次的响应：由页面自己用 `fetch` 发出，所以 cookie / referer 自动带上、whistle 代理规则照旧生效、这一次也会成为一条新记录（`replayedFrom` 指回原请求）。只放 `xhr`/`fetch`；`POST`/`PUT`/`PATCH`/`DELETE` 必须显式 `allowUnsafe: true`；`body` 只回前 8KB（`truncated`/`responseSize` 说明真实大小），完整响应用 `get_network({ requestId: replayedId })` 取；抓包时已被格式化成 `[object Blob]` 的请求体直接拒绝，不假装能还原 |
 | `eval_js` | 在页面执行 JS 拿序列化结果（对标 CDP Runtime.evaluate），人机同屏可见 |
 | `get_dom` | CSS 选择器查询元素 outerHTML |
+| `get_vue_tree` | Vue 组件树（Vue 2 / Vue 3 都认）：不带 `app` 列出页面里的应用（名字、挂载容器、`readable`——Vue 3 的组件树只有开发构建页面可读，Vue 2 生产页面也能看），带 `app` + `path`（形如 `"0.1"`）展开一层子组件；子项多时返回 `next` 作为下一页的 `offset`，`limit` 默认 12、最大 20。跑的是面板 Vue 标签那份序列化器，经 `eval_js` 下发，老探针也能用 |
+| `get_vue_state` | 读单个组件的状态 JSON：`props` / `setup`（ref 已解包）/ `data` / `computed`（真的求值）/ `$route` 摘要 / Pinia store / Vuex state + getters，页面没有的段返回 `null`；有深度与体积预算，整体约 20000 字符封顶 |
+| `set_vue_state` | 按点路径写回一个值（devtools 手感）：`section` 取 `data`/`setup`/`vuex`/`pinia`，`key` 是相对它的路径（`appTitle`、`form.name`、`items.0.done`；`pinia` 的第一段是 store id，`vuex` 直写 `$store.state`、绕过 mutation 记录）；`props`/`computed` 拒写（它们由父级或派生决定）。写入是响应式的，页面 UI 跟着变 |
 | `get_storage` | 读 cookies / localStorage / sessionStorage |
 | `set_storage` | 写单条：`storage`(local/session/cookie) + `key` + `value`，返回页面写入后的真实值（HttpOnly cookie 写不进会明确报错） |
 | `get_page_info` | URL/UA/viewport/JS 堆内存/导航计时（TTFB、DOMContentLoaded、load） |
@@ -176,14 +178,14 @@ whistle.chii 风格插件，把 **MCP server、设备面板和探针注入一起
 
 - **WS Hub**（:9528）：探针连接点，随 w2 起停。同一个端口兼作静态资源（`GET /html2canvas.min.js`），截图用的 html2canvas 由插件 vendor，探针优先从这个它本来就连得上的源加载——纯内网无 CDN 也能截图
 - **MCP over HTTP**（:9527，stateless Streamable HTTP）：`POST http://127.0.0.1:9527/mcp`，任意支持 http 传输的 MCP 客户端直接接入，16 个工具全量可用，支持 `sessionId` 定向
-- **面板 UI**（:9527/）：左侧会话列表按**接入顺序**排列（设备标签/URL/在线状态，1s 自动刷新，不因为选中或活动切换而重排），点击会话在右侧 Drawer 打开 vConsole 式调试面板——System / Logs / Network / Storage / Screenshot（执行 JS 的输入框在 Logs 页底部），与 MCP 工具共用同一套实现；Network 详情区带「原样再发一次」，非幂等方法会先弹一次确认；按需求**不含 element 面板**
+- **面板 UI**（:9527/）：左侧会话列表按**接入顺序**排列（设备标签/URL/在线状态，1s 自动刷新，不因为选中或活动切换而重排），点击会话在右侧 Drawer 打开 vConsole 式调试面板——System / Logs / Network / Element / Vue / Storage / Screenshot（执行 JS 的输入框在 Logs 页底部），与 MCP 工具共用同一套实现；Network 详情区带「原样再发一次」，非幂等方法会先弹一次确认。Element 与 Vue 两个标签是 eval 驱动的：序列化器随面板下发、在页面上现跑，所以对**已发布的每一版探针**都可用，不需要探针升级
 - **探针资源**（:9527/inject.html、:9527/probe.js）：供插件规则注入使用
 
 **网络边界**：整套只服务**同一局域网**。接入规则是一条：**回环免鉴权，非回环必须带 `?t=<token>`**（`docs/adr/0004-loopback-free-non-loopback-token.md`）——hub 启动时生成 token、写进 `~/.whistle-vconsole/hub.json`、并在 stderr 打印成可直接粘贴的 `ws://<lan>:9528?t=...`；whistle 注入路径自动带好，本机面板/MCP 客户端不需要它，从局域网打开面板要在 URL 上补 `?t=`。它挡住的是"读不到我们 HTTP 响应"的对端（别的机器上的网页可以直接发 `ws://192.168.x.x:9528`，因为 WebSocket 不受 CORS 约束），**不挡住能自由 curl 你端口的主机**——探针 js 与注入片段必须公开可取，同网段视为可信这条从 ADR-002 起没变。绝不要把 9527/9528 暴露到公网或不可信网络；跨网段/公网调试的取舍见 `docs/adr/0002-single-http-port-and-no-relay.md`。
 
 ```bash
-pnpm --filter @bobjoy/whistle.vconsole build   # 出包 whistle.vconsole-0.3.0.tgz（node_modules 已捆绑，可离线安装）
-w2 install whistle.vconsole-0.3.0.tgz
+pnpm --filter @bobjoy/whistle.vconsole build   # 出包 whistle.vconsole-<版本>.tgz（node_modules 已捆绑，可离线安装）
+w2 install whistle.vconsole-<版本>.tgz
 w2 start
 ```
 
@@ -215,12 +217,13 @@ MCP 客户端的两种接法，一份可以直接粘的配置（`<workspace>` �
 
 探针以 vConsole dev 分支（`de7026d`）为基线，**diff 全部是增量**，便于跟上游合并：
 
-- `src/mcp/*`（新增）：bridge 主模块（tap 数据层 + 批量推送 + 断线全量重放）、WS 客户端（指数退避重连）、显示序列化（深度/循环/体积三重防护）、命令实现（eval/dom/storage/page_info/screenshot/replay，重放直接读页面内的原始请求项，不依赖回传的序列化文本）、console hook 完整性守卫
-- `src/core/core.ts`：+4 行，构造时按 `option.serverUrl` 启动 bridge
-- `src/core/options.interface.ts`：+ `mcp?: VConsoleMcpOptions`
-- `src/log/log.model.ts`：+2 行，给 console mock 打标（守卫识别第三方事后覆盖 console 的场景，自动重新 hook）
-- `src/vconsole.ts`：+1 行，导出类型
-- `src/network/fetch.proxy.ts`：+9 行、`src/network/requestItem.ts`：+1 行 —— 重放出来的请求在自己那条记录上标 `replayedFrom`（`fetch()` 前一 tick 打标记、代理同步取走，不按 URL 猜）
+- `src/mcp/*`（新增，合计约 1680 行）：`bridge.ts` 主模块（tap 数据层 + 批量推送 + 断线全量重放）、`wsClient.ts` WS 客户端（指数退避重连）、`serialize.ts` 显示序列化（深度/循环/体积三重防护）、`commands.ts` 命令实现（eval/dom/storage/page_info/screenshot/replay，重放直接读页面内的原始请求项，不依赖回传的序列化文本）、`replayStamp.ts`（重放在 `fetch()` 前一 tick 打的那半个标记）、`protocol.ts`（协议副本）
+- `src/network/wsCodec.ts`：+80 行，二进制帧预编码成 base64（超过 8192 字节只编前 8KB，尾部追加 `:原始字节数`）；`src/network/websocket.proxy.ts`：+10 −1，收发两侧都过它，Blob 读到字节后回头改写那条帧
+- `src/core/core.ts`：+15 行，构造时按 `option.serverUrl` 尽早起 bridge，不等面板打开才开始收集
+- `src/core/options.interface.ts`：+15 行，五个新选项——`serverUrl` / `deviceName` / `autoConnect` / `hideUI` / `maxBuffer`
+- `src/log/log.model.ts`：+5 −1，给 console mock 打标（守卫据此识别第三方事后覆盖 console 的场景，自动重新 hook）
+- `src/network/fetch.proxy.ts`：+37 −2、`src/network/network.model.ts`：+24 −7 —— 两件事：重放出来的请求在自己那条记录上标 `replayedFrom`（代理同步取走标记，不按 URL 猜）；fetch 看门狗，第三方事后重新赋值 `window.fetch`（或初始化时它是个 getter）也会被补挂，包装链保留不断
+- `src/network/requestItem.ts`：+1 行（`replayedFrom` 字段）、`src/vconsole.ts`：+1 行（导出类型）
 
 数据链路：tap vConsole 的 log store（svelte store 订阅，天然补齐历史）与 `VConsoleNetworkModel.updateRequest`（所有请求类型的唯一汇聚点）→ 探针端环形缓冲 → WS 推送 → server 端按 id 去重 + 游标缓冲 → MCP 工具查询。断线重连时探针全量重放缓冲，server 去重后无损。
 
@@ -234,7 +237,7 @@ MCP 客户端的两种接法，一份可以直接粘的配置（`<workspace>` �
 ## 开发
 
 ```bash
-git clone --recursive <本仓库>   # 探针是 submodule，漏了 --recursive 就 `git submodule update --init`
+git clone --recursive https://github.com/Bobjoy/whistle.vconsole.git   # 探针是 submodule，漏了 --recursive 就 `git submodule update --init`
 pnpm install
 pnpm build          # 构建全部包（含 packages/vconsole）
 pnpm test:e2e       # 回归 202 项：stdio 50 + 多会话 11 + MCP-over-HTTP 59 + `v2` CLI 进程面 82（start/stop/status/logs、端口共存、发布面）
@@ -243,9 +246,10 @@ pnpm demo           # 启动演示页 http://localhost:9443
 
 探针侧的 40 项单测（WS 编解码 10 + html2canvas 加载链 9 + 页面侧重放 21）跟着探针源码走，在探针仓库里跑 `npm test`，不在本仓库。
 
-两个容易踩的操作点：
+三个容易踩的操作点：
 
 - 发布探针前单独跑一次 `pnpm --filter @bobjoy/vconsole build:typings`（`pnpm build` 不含它，否则 `dist/vconsole.min.d.ts` 是旧的）。
+- 跑 `pnpm test:e2e` 前先 `v2 stop`（whistle 插件在跑也要停）：最后那段 `cli.e2e` 要独占 9527，端口被占着它会带着提示直接退出，前三段的结果也就不完整。
 - 复验装机效果前先确认没有残留进程：whistle 把插件 fork 成独立进程，`w2 stop` 不保证带走它，残留进程会占着 9527/9528 继续吐旧字节；`examples/demo-h5/server.mjs` 又在启动时把探针 bundle 读进内存。比一下 `:9527/probe.js`、`:9443/vconsole.min.js` 和磁盘上 `dist/vconsole.min.js` 的 md5，一致才说明你验的是当前代码。
 
 ## 路线图
@@ -257,12 +261,13 @@ pnpm demo           # 启动演示页 http://localhost:9443
 - [x] v2.1：包名收敛为 `@bobjoy/whistle.vconsole` / `@bobjoy/vconsole` / `@bobjoy/vconsole-vite`，协议不再单独发包；插件规则自动注入探针（页面零改动）
 - [x] v2.2：`mcp-server` 并入 whistle 插件包（`src/*.ts` → `dist/*.cjs`），stdio 回退用同一个包的 `bin`（v0.3.0 起这个命令叫 `v2`），仓库只剩三个包
 - [x] v2.2+（进行中）：协议先收敛为 `packages/protocol` 单一来源，量完跨仓库代价后翻案成两侧各一份内联副本（ADR-0007/0008）；`ws_frames` 增量查看 WS 帧（帧级环形缓冲，二进制由探针预编码 base64）；html2canvas vendor 进插件、探针优先从 hub 端口加载（纯内网可截图）
-- [x] v2.2+（发布清账）：私有协议包彻底**不作依赖**（webpack `resolve.alias` + tsconfig `paths` 构建期内联，pnpm 不再把它改写成装不出的范围）；`@bobjoy/vconsole-vite` 补 LICENSE + README；仓库根补 LICENSE；删掉插件里指向 Tencent/vConsole 的假 `repository`
+- [x] v2.2+（发布清账）：私有协议包先做到**不作依赖**（webpack `resolve.alias` + tsconfig `paths` 构建期内联，pnpm 不再把它改写成装不出的范围），随后那个壳整个撤掉——Node 侧那份并成 `packages/whistle-plugin/src/protocol.ts`（相对 import，`paths` 随之删除），探针侧继续用自己的 `src/mcp/protocol.ts`；`@bobjoy/vconsole-vite` 补 LICENSE + README；仓库根补 LICENSE；删掉插件里指向 Tencent/vConsole 的假 `repository`
  - [x] v2.2+（Vue 面板）：远程抽屉新增 Vue 标签——eval_js 驱动的组件树 + 状态查看与复制，**Vue 2 / Vue 3 双支持**：Vue 3 走 `__vue_app__`（组件树仅开发构建页面可读，生产页明确提示），Vue 2 走 `__vue__`（生产构建也暴露实例，线上线下都能看）；状态含 **computed 求值、`$route` 摘要、Pinia store（`$pinia._s`）**；**状态回写**：详情区「编辑」按 `data.xxx.y / setup.xxx` 点路径写入 JSON 值（props/computed 拒写），SSE 活动驱动的节流自动刷新（编辑中不打扰）；根节点带 v2/v3 徽标；demo 加 `vue.html`（Vue 3 dev 构建）与 `vue2.html`（Vue 2.7 生产构建）
  - [x] v2.2+（Element 面板）：远程抽屉新增 Element 标签——eval_js 驱动的懒展开 DOM 树（序列化在页面上实时执行，单响应 ≤1800 字符自动分页）+ outerHTML 详情与复制，零协议变更、对全部已发布探针立即可用；正式协议命令化待需求验证后评估
  - [x] v2.2+（请求重放）：`replay_request` 把 Network 里抓到的请求在**页面内**原样再发一次（走同源 cookie/签名/代理规则），响应新状态、8KB 截断、新记录带 `replayedFrom`；非幂等方法由显式 `allowUnsafe` 把关，面板详情区同一颗按钮先弹确认；不可重放的（图片/script 等资源类请求、`[object Blob]` 占位请求体）直接拒绝而不是降级。见 `docs/adr/0003-page-side-replay.md`、`docs/specs/2026-10-05-network-replay.md`
 - [x] v2.2+（standalone）：HTTP 面上移成 `src/httpService.ts`，插件与 `v2 start` 共用一份实现；全局命令收成 `v2`（`start`/`-f`/`stop`/`status`/`logs`，裸跑仍是 stdio MCP），与 whistle 插件同端口共存、`status` 报版本漂移。见 `docs/adr/0005-standalone-v2-start.md`
-- [ ] 真机复验：手机走 whistle 代理，重点验探针能否连上 `ws://<开发机 LAN IP>:9528`（微信 webview、代理与 WS 并存）。目前只验到本地浏览器 + 进程外假探针（17 台主流设备模拟）
+- [x] v2.2+（发包与开源面）：三个包全部发到公网 npm（`@bobjoy/whistle.vconsole` / `@bobjoy/vconsole` / `@bobjoy/vconsole-vite`，版本号以各包 `package.json` 为准），unpkg 外链接可用；仓库转到 [`Bobjoy/whistle.vconsole`](https://github.com/Bobjoy/whistle.vconsole)（public），探针 fork 在 [`Bobjoy/vConsole`](https://github.com/Bobjoy/vConsole) 的 `mcp` 分支
+- [ ] 真机复验：手机走 whistle 代理，重点验探针能否连上 `ws://<开发机 LAN IP>:9528`（微信 webview、代理与 WS 并存）。目前只验到本地浏览器 + 进程外假探针，设备多样性靠 e2e 里那 17 条 UA/卡片标签断言覆盖，真机品牌行为没验过
 - [ ] ~~v2.x：公网 relay（远程设备接入）~~ —— 搁置，理由见 `docs/adr/0002-single-http-port-and-no-relay.md`（协议预留的 proxy 通道只服务于本机多进程共享 hub，不是远程接入通道）
 - [ ] v2.x：MITM 注入方案（评估结论：whistle 插件路径优先，自研 MITM 搁置——手机侧步骤相同而 whistle 覆盖目标用户群）
 
